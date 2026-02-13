@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+body {
+    font-family: "Century Gothic", CenturyGothic, AppleGothic, sans-serif;
+    color: #5a5b5c;
+}
