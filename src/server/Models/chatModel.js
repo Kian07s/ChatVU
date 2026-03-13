@@ -18,7 +18,18 @@ const chatSchema = new mongoose.Schema(
         groupAdmin: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "User"
-        }
+        },
+        archivedBy: [{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+        }],
+
+        pinnedBy: [{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+          }],
+
+        lastMessage: Object
     },
     {
         timestamps: true,

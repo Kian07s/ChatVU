@@ -28,6 +28,54 @@ export const postRequest = async(url, body) => {
     
 };
 
+export const putRequest = async(url, body) => {
+    const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+            "Content-Type" : "application/json"
+        },
+        body,
+        credentials: "include",
+    });
+
+    let data;
+
+    try {
+        data = await response.json();
+        //error check and message
+        if (!response.ok) {
+            return { error: true, message: data?.message || String(data) || "Something went wrong" };
+        }
+
+        return data;
+    } catch(error) {
+        return { error: true, message: error.message || "Network or server error" };
+    }
+    
+};
+
+export const patchRequest = async (url, body) => {
+    const response = await fetch(url, {
+        method: "PATCH",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        credentials: "include"
+    });
+
+    let data;
+    try {
+        data = await response.json();
+        if (!response.ok) {
+            return { error: true, message: data?.message || String(data) || "Something went wrong" };
+        }
+        return data;
+    } catch (error) {
+        return { error: true, message: error.message || "Network or server error" };
+    }
+};
+
 //get request
 export const getRequest = async(url) => {
 
@@ -50,3 +98,4 @@ export const getRequest = async(url) => {
         };
     }
 };
+

@@ -1,11 +1,73 @@
 //to be shown when user clicks on Group header, showing group info
-import { ChevronLeft } from "lucide-react";
-import { FaUser } from "react-icons/fa";
+import { ChevronLeft, Pencil, Check } from "lucide-react";
+import { FaUser, FaUserPlus } from "react-icons/fa";
 import { FiTrash2 } from "react-icons/fi";
-import { baseUrl } from "../../../utils/services";
-const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSelectedChat, setView }) => {
+import { baseUrl, putRequest, getRequest } from "../../../utils/services";
+import { useState, useEffect } from "react";
+import { useContext } from "react";
+import { ChatContext } from "../../../Context/ChatContext";
+
+const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSelectedChat, setView, onClose }) => {
     //save admin in order to only give admin certain functionalities
-    const isAdmin = chat.groupAdmin === user._id;
+    const isAdmin = chat.groupAdmin?.toString() === user._id?.toString();
+    //for online user recognition
+    const { onlineUsers } = useContext(ChatContext);
+
+    const [isEditingName, setIsEditingName] = useState(false);
+    const [newGroupName, setNewGroupName] = useState(chat.groupName);
+    //for chat format ui switch
+    const [step, setStep] = useState("type");
+    //for adding group members
+    const [isAddingMembers, setIsAddingMembers] = useState(false);
+    //what the user types and being able to update it using useState
+    const [query, setQuery] = useState("");
+    //search results (list of users)
+    const [results, setResults] = useState([]);
+    //while the results are loading
+    const [loading, setLoading] = useState(false);
+     //group chat members selection
+     const [selectedMembers, setSelectedMembers] = useState([]);
+
+     const isMemberOnline = (memberId) => {
+        return onlineUsers?.some((user) => user?.userId === memberId);
+    };
+
+    //Searching for users to chat with. Runs every time the query changes
+    useEffect(() => {
+        const searchUsers = async () => {
+            //if the user deletes the text, stop searching, claer results
+            if (!query.trim()) {
+                setResults([]);
+                return;
+            }
+            setLoading(true);
+
+            //calls backend
+            const response = await getRequest(
+                `${baseUrl}/users/search?query=${query}`
+            );
+            setLoading(false);
+
+            if (!response?.error) {
+                setResults(response.filter(u => u._id !== user._id && !chat.members.some(m => m._id === u._id)));
+            }
+        };
+        searchUsers();
+    }, [query, user._id]);
+
+     //for selecting group members
+     const toggleMember = (member) => {
+        setSelectedMembers((prev) => {
+            const exists = prev.some(m => m._id === member._id);
+
+            if (exists) {
+                return prev.filter(m => m._id !== member._id);
+            }
+    
+            return [...prev, member];
+        });
+    };
+
 
     const handleRemove = async (member) => {
         const confirmed = window.confirm(
@@ -45,6 +107,80 @@ const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSe
         }
     };
 
+    const handleAddMembers = async() => {
+        if (selectedMembers.length === 0) {
+            return;
+        } 
+
+        const confirmed = window.confirm(
+            `Add ${selectedMembers.length} member(s) to "${chat.groupName}"?`
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        const response = await fetch(`${baseUrl}/chats/${chat._id}/add`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json"},
+            body: JSON.stringify({
+                memberIds: selectedMembers.map(m => m._id),
+                requesterId: user._id
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.message || "Failed to add members");
+            return;
+        }
+
+        // Update chat state everywhere
+        setUserChats(prev =>
+            prev.map(c => c._id === chat._id ? data : c)
+        );
+
+        updateSelectedChat(data);
+
+        // Reset modal state
+        setSelectedMembers([]);
+        setQuery("");
+        setResults([]);
+        setStep("type");
+        setView("groupInfo");
+    };
+
+    const handleNameChange = async() => {
+        if (!newGroupName.trim() || newGroupName === chat.groupName) {
+            setIsEditingName(false);
+            return;
+        }
+
+        const confirmed = window.confirm(
+            `Change group name to "${newGroupName}"?`
+        );
+        if (!confirmed) {
+            return;
+        }
+
+        const response = await putRequest(
+            `${baseUrl}/chats/${chat._id}/changeName`,
+            JSON.stringify({ newGroupName: newGroupName.trim() })
+        );
+    
+        if (response.error) {
+            return console.log("Error updating name", response);
+        }
+
+        updateSelectedChat(response);
+        setUserChats((prev) => prev.map((c) => (c._id == chat._id ? response : c))
+        );
+
+        setIsEditingName(false);
+        alert("Group name updated!");
+    };
+
     //leaving group
     const handleLeave = async()=> {
         const confirmed = window.confirm(
@@ -75,7 +211,7 @@ const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSe
 
     return (
         <div className="flex-1 p-4 text-center">
-            <div className="relative flex items-center mb-10">
+            <div className="relative flex items-center mb-10 pb-2 border-b">
                 <button
                     onClick={onBack}
                     className="absolute left text-sm text-[#3594b6] cursor-pointer"
@@ -83,56 +219,182 @@ const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSe
                     <ChevronLeft size={24} />
                 </button>
 
-                <h2 className="mx-auto text-xl font-bold">
-                    {chat.groupName}
-                </h2>
+                <div className="mx-auto text-xl font-bold">
+                    {isAdmin && isEditingName ? (
+                        <input
+                            value={newGroupName}
+                            onChange={(e) => setNewGroupName(e.target.value)}
+                            className="border-b border-[#3594b6] outline-none text-center" autoFocus
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                    handleNameChange();
+                                }
+                            }}
+                        />
+                    ) : (
+                        <span>{chat.groupName}</span>
+                    )}
+                </div>
+                
+                {isAdmin && (
+                    <div className="absolute right-0">
+                        {isEditingName ? (
+                            <button 
+                                onClick={handleNameChange}
+                                className="flex items-center justify-center cursor-pointer w-10 h-10 bg-[#3594b6] text-white hover:bg-[#2a3441] mb-2 rounded-full"
+                            >  
+                                <Check size={25}/>
+                            </button> 
+                        ) : (
+                            <button 
+                                onClick={() => setIsEditingName(true)}
+                                className="flex items-center justify-center cursor-pointer w-10 h-10 hover:bg-gray-100 mb-2 rounded-full"
+                        >
+                                <Pencil size={25}/>
+                            </button>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Members */}
             <div className="mb-10">
-                <h3 className="font-semibold mb-2 text-lg underline text-center">Members</h3>
-                <div className="space-y-3">
-                    {chat.members.map(member => (
-                        <div key={member._id} className="flex items-center p-3 rounded-md shadow-sm">
+                <h3 className="font-semibold mb-2 text-lg text-center">Members</h3>
+                <div className="mt-5">
+                    { /* Add members button*/ }
+                    {isAdmin && (
+                        <button onClick={() => setStep("add")} className="flex items-center p-3 rounded-md shadow-sm bg-[#3594b6] hover:bg-[#2a3441] cursor-pointer hover:">
                             {/* Icon */}
-                            <div className="h-10 w-10 mr-5 rounded-full bg-gray-200 flex items-center justify-center">
-                                <FaUser className="text-xl text-[#3594b6]"/>
-                            </div>
-                                        
-                            <span>{member.name}</span>
-                            <span className="font-medium">
-                                {member._id === user._id && (
-                                    <span className="ml-2 text-xs text-gray-500">(you)</span>
-                                )}
-                            </span>
+                            <div className="h-10 w-10 rounded-full bg-white flex items-center justify-center">
+                                <FaUserPlus className="text-xl text-[#3594b6]"/>
+                            </div>  
+                                <span className="text-white mx-5">Add Members</span>
+                        </button>
+                    )}
 
-                            {isAdmin && member._id !== user._id && (
-                                <button onClick={() => handleRemove(member)} className="ml-auto text-red-500 text-sm cursor-pointer h-10 w-10 rounded-full hover:bg-gray-200 flex items-center justify-center">
-                                    <FiTrash2 size={20} color="red"/>
-                                </button>
-                            )}
-                        </div>
-                    ))}
+                    {chat.members.map(member => {
+                        const memberIsAdmin = member._id === chat.groupAdmin?.toString();
+
+                        return (
+                            <div key={member._id} className="flex items-center p-3 rounded-md shadow-sm">
+                                {/* Icon */}
+                                    <div className="relative h-10 w-10 mr-4 rounded-full bg-gray-200 flex items-center justify-center">
+                                        <FaUser className="text-xl text-[#3594b6]"/>
+
+                                        {/* Green dot to show user online, don't want that for groups*/}
+                                        {isMemberOnline(member._id) && (
+                                            <span className="absolute bottom-0 right-0 h-4 w-4 bg-green-500 border-2 border-white rounded-full"></span>
+                                        )}
+                                    </div>
+                                        
+                                    <span>{member.name}</span>
+
+
+
+                                {memberIsAdmin && (
+                                    <span className="ml-2 px-1 p-0.5 text-xs bg-gray-200 text-[#3594b6] rounded">Admin</span>
+                                )}
+
+                                <span className="font-medium">
+                                    {member._id === user._id && (
+                                        <span className="ml-2 text-xs text-gray-500">(you)</span>
+                                    )}
+                                </span>
+
+                                {isAdmin && member._id !== user._id && (
+                                    <button onClick={() => handleRemove(member)} className="ml-auto text-red-500 text-sm cursor-pointer h-10 w-10 rounded-full hover:bg-gray-200 flex items-center justify-center">
+                                        <FiTrash2 size={20} color="red"/>
+                                    </button>
+                                )}
+                            </div>
+                        )
+                    })}
                 </div>
             </div>
 
-            {/* Admin controls */}
-            {isAdmin && (
                 <div className="mb-6">
                     <div className="flex flex-col items-center">
-                        <button className="h-8 w-sm rounded-md text-white bg-[#3594b6] hover:bg-[#2a3441] cursor-pointer mb-2">
-                            Change group name
-                        </button>
-                        <button className="h-8 w-sm rounded-md text-white bg-[#3594b6] hover:bg-[#2a3441] cursor-pointer mb-2">
-                            Add members
-                        </button>
+
                         {/* Leave group */}
                         <button className="bg-red-500 hover:bg-red-700 font-semibold cursor-pointer h-8 w-sm rounded-md text-white" onClick={handleLeave}>
                             Leave group
                         </button>
                     </div>
                 </div>
-            )}    
+            {/* if add members is clicked */}
+            {isAdmin && step === "add" && (
+                //open pop up
+                <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+                    <div className="bg-white w-full max-w-md rounded-lg shadow-lg p-4">
+                        {/* Header */}
+                        <div className="flex justify-between items-center mb-3">
+                            <h2 className="font-semibold text-lg">Add members</h2>
+                            <button onClick={() => setStep("type")} className="text-xl cursor-pointer">&times;</button>
+                        </div>
+
+                        <div>
+                            {/* Search */}
+                            <input
+                                value={query}
+                                onChange={(e) => setQuery(e.target.value)}
+                                placeholder="Search users to add to group..."
+                                className="w-full border rounded px-3 py-2 mb-3 outline-none focus:border-[#3594b6]"
+                            />
+
+                            {loading && <div className="text-sm">Searching...</div>}
+
+                            {/* Results */}
+                            <div className="max-h-64 overflow-y-auto">
+                                {results.map((u) => (
+                                    <button
+                                        key={u._id}
+                                        onClick={() => toggleMember(u)}
+                                        className="w-full text-left px-3 py-2 border-b hover:bg-gray-100 cursor-pointer"
+                                    >
+
+                                        <div className="flex items-center justify-between mt-1">
+                                            <div className="font-medium">{u.name}</div>
+
+                                            {/* Selection Circle */}
+                                            <div
+                                                className={`h-5 w-5 rounded-full border-2 flex items-center justify-center
+                                                ${selectedMembers.some(m => m._id === u._id) ? "bg-[#3594b6] border-[#3594b6]" : "border-gray-400"}`}
+                                            >
+                                                {selectedMembers.some(m => m._id === u._id) && (
+                                                    <div className="h-2 w-2 bg-white rounded-full" />
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="text-sm">{u.email}</div>
+                                    
+                                    
+                                    </button>
+                                ))}
+
+                                {/*message to show when there are no users found*/}
+                                {!loading && query.trim() && results.length === 0 && (
+                                    <div className="text-sm text-center py-4">
+                                        No users found
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex justify-end mt-5">
+                                <button 
+                                    disabled={selectedMembers.length < 1}
+                                    onClick={handleAddMembers} 
+                                    className={`h-10 w-15 text-white rounded-md 
+                                    ${selectedMembers.length < 1
+                                        ? "bg-gray-400 cursor-not-allowed"
+                                        : "bg-[#3594b6] hover:bg-[#2a3441]"
+                                    }`}
+                                    >Add
+                                </button>
+                            </div> 
+                        </div>
+                    </div>
+                </div>
+            )} 
         </div>
     );
 };

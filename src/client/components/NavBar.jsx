@@ -20,10 +20,8 @@ const NavBar = () => {
         <div className="flex-1"></div>
 
         <div className="text-4xl flex justify-center items-center">
-            <Link to="/">
-                <span className="font-thin">Chat</span>
-                <span className="font-extrabold text-white">VU</span>
-            </Link>
+            <span className="font-thin">Chat</span>
+            <span className="font-extrabold text-white">VU</span>
         </div>
         <div className="flex-1 flex justify-end space-x-6 mr-5">
             {!loggedIn ? (
@@ -41,7 +39,7 @@ const NavBar = () => {
                     </button>
 
                     {dropDownOpen && (
-                        <div className="absolute right-0 mt-2 w-48 bg-[#3594b6] rounded shadow-lg text-white">
+                        <div className="z-10 absolute right-0 mt-2 w-48 bg-[#3594b6] rounded-md shadow-lg text-white">
                             <div className="px-4 py-2 border-b border-[#5a5b5c] text-sm">
                                 <span className="block">Signed in as</span>
                                 <span className="block font-semibold truncate"></span>
