@@ -11,11 +11,11 @@ import { ChatContext } from "../../../Context/ChatContext";
 import { FaUser, FaUsers } from "react-icons/fa";
 
 //closes overlay when chat is created
-const NewChat = ({ onClose }) => {
+const NewChat = ({ onClose, setSelectedChat, setView }) => {
     //identfy user
     const { user } = useContext(AuthContext);
     //inserts new chat into list without refetching
-    const { addChat } = useContext(ChatContext);
+    const { addChat, userChats } = useContext(ChatContext);
 
     //what the user types and being able to update it using useState
     const [query, setQuery] = useState("");
@@ -27,7 +27,10 @@ const NewChat = ({ onClose }) => {
     const [step, setStep] = useState("type");
     //group chat members selection
     const [selectedMembers, setSelectedMembers] = useState([]);
+    //group name change
     const [groupName, setGroupName] = useState("");
+    //stop chat creation after first input
+    const [isCreatingChat, setIsCreatingChat] = useState(false);
 
 
     const memberNames = selectedMembers.map(m => m.name).join(", ");
@@ -57,6 +60,27 @@ const NewChat = ({ onClose }) => {
 
     //Creating a chat. happens when logged in user clicks another user to chat with
     const createChat = async (recipientId) =>  {
+        //if chat is already being created, stop
+        if (isCreatingChat) {
+            return
+        }
+
+        setIsCreatingChat(true);
+
+         //check if dm exists
+         const existingChat = userChats?.find(c =>
+            !c.isGroupChat &&
+            c.members.some(m => m._id === recipientId)
+        );
+
+        if (existingChat) {
+            setSelectedChat(existingChat);
+            setView("messages");
+            setIsCreatingChat(false);
+            onClose();
+            return;
+        }
+        
         const response = await postRequest(`${baseUrl}/chats`,
             JSON.stringify({
                 members: [user._id, recipientId],
@@ -64,13 +88,18 @@ const NewChat = ({ onClose }) => {
             })
         );
 
-        if (!response?.error) {
-            //updatws chat list
-            addChat(response);
-            //closes overlay
-            onClose();
+        setIsCreatingChat(false);
+
+        if (response?.error) {
+            return;
         }
+
+        addChat(response);
+        setSelectedChat(response);
+        setView("messages");
+        onClose();
     };
+
     //for selecting group members
     const toggleMember = (member) => {
         setSelectedMembers((prev) => {
@@ -85,6 +114,12 @@ const NewChat = ({ onClose }) => {
     };
 
     const createGroup = async () => {
+        if (isCreatingChat) {
+            return;
+        }
+
+        setIsCreatingChat(true);
+
         try {
             const body = {
                 groupName: groupName.trim(),
@@ -97,6 +132,8 @@ const NewChat = ({ onClose }) => {
                 JSON.stringify(body)
             );
 
+            setIsCreatingChat(false);
+            
             if (response?.error) {
                 console.error("Failed to create group:", response);
                 return;
@@ -156,8 +193,10 @@ const NewChat = ({ onClose }) => {
                             {results.map((u) => (
                                 <button
                                     key={u._id}
+                                    //disabling button when already creating
+                                    disabled={isCreatingChat}
                                     onClick={() => createChat(u._id)}
-                                    className="w-full text-left px-3 py-2 border-b hover:bg-gray-100 cursor-pointer"
+                                    className={`w-full text-left px-3 py-2 border-b transition-all ${isCreatingChat ? "opacity-50 cursor-not-allowed" : "hover:bg-gray-100 cursor-pointer"}`}
                                 >
                                     <div className="font-medium">{u.name}</div>
                                     <div className="text-sm">{u.email}</div>
