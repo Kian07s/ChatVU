@@ -128,14 +128,12 @@ export const ChatContextProvider = ({ children }) => {
 
     //get userChats whenever the user changes
     useEffect(() => {
-        const getUserChats = async() => {
-            //if the user exists, get their messages
-            if (!user?._id) {
-                return;
-            }
-                
+        //if the user doesn't exist, return
+        if (!user?._id) {
+            return;
+        }
+        const getUserChats = async() => {    
             setIsUserChatsLoading(true);
-            setUserChatsError(null);
 
             try {
                 const response = await getRequest(`${baseUrl}/chats/user/${user?._id}`);
@@ -151,6 +149,17 @@ export const ChatContextProvider = ({ children }) => {
                 //if successfull, show chats
                 if (Array.isArray(response)) {
                     setUserChats(response);
+
+                    //fetch unread message count
+                    const unreadRes = await getRequest(`${baseUrl}/messages/unread/${user._id}`);
+                    if (Array.isArray(unreadRes)) {
+                        const newNotifications = unreadRes.map(item => ({
+                            chatId: item._id,
+                            count: item.count
+                        }));
+
+                        setNotifications(newNotifications);
+                    }
                 } else {
                     setUserChats([]);
                 }
@@ -158,11 +167,12 @@ export const ChatContextProvider = ({ children }) => {
                 setIsUserChatsLoading(false);
                 setUserChatsError(error);
                 setUserChats([]);
+                setNotifications([]);
             }
         };
 
         getUserChats();
-    }, [user])
+    }, [user?._id])
 
     const updateTypingUsers = (chatId, senderName, isTyping) => {
         setTypingUsers(prev => {
