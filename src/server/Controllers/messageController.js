@@ -44,12 +44,16 @@ const messagesSeen = async(req, res) => {
     try {
         const updatedMessages = await messageModel.updateMany(
             { chatId, senderId: { $ne: userId }, seenBy: { $ne: userId }, },
-            { $push: { seenBy: userId } }
+            { $addToSet: { seenBy: userId } }
         );
 
-        await chatModel.findByIdAndUpdate(chatId, {
-            "lastMessage.seenBy": userId
-        });
+        const lastMessage = await messageModel.findOne({ chatId }).sort({ createdAt: -1 });
+
+        if (lastMessage) {
+            await chatModel.findByIdAndUpdate(chatId, {
+                lastMessage
+            });
+        }
 
         res.json({ success: true, updatedCount: updatedMessages.modifiedCount });
     } catch (err) {
@@ -57,4 +61,30 @@ const messagesSeen = async(req, res) => {
     }
 };
 
-export { createMessage, getMessages, messagesSeen };
+const getUnreadMessages = async (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        const unread = await messageModel.aggregate([
+            {
+                $match: {
+                    senderId: { $ne: userId },
+                    seenBy: { $ne: userId }
+                }
+            },
+            {
+                $group: {
+                    _id: "$chatId",
+                    count: { $sum: 1 }
+                }
+            }
+        ]);
+
+        res.json(unread);
+
+    } catch (error) {
+        res.status(500).json(error)
+    }
+}
+
+export { createMessage, getMessages, messagesSeen, getUnreadMessages };

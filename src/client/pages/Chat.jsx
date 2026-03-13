@@ -4,7 +4,7 @@ import {ChatContext} from "../../Context/ChatContext";
 import { useFetchRecipientUser } from "../hooks/useFetchRecipient";
 import { IoPaperPlane } from "react-icons/io5";
 import { FaInfoCircle, FaArchive } from "react-icons/fa";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, MoveDown } from "lucide-react";
 import UserChat from "../components/chat/UserChat";
 import NewChat from "../components/chat/NewChat";
 import GroupInfo from "../components/chat/GroupInfo";
@@ -20,7 +20,7 @@ const Chat = () => {
     const [isAtBottom, setIsAtBottom] = useState(true); //state to check where user is for scroll
     const { userChats, isUserChatsLoading, setUserChats, messages, setMessages, notifications, setNotifications, selectedChat, setSelectedChat, socket, typingUsers, setTypingUsers, updateTypingUsers,markMessagesAsSeen, onlineUsers} = useContext(ChatContext); 
     const [view, setView] = useState("messages"); //to be able to show group info
-    
+    const [showScrollButton, setShowScrollButton] = useState(false);
 
     const { user } = useContext(AuthContext); 
     const { recipientUser } = useFetchRecipientUser({
@@ -144,6 +144,9 @@ const Chat = () => {
         const threshold = 50; //pixels from bottom to be the limit
         setIsAtBottom(scrollHeight - scrollTop - clientHeight < threshold);
 
+        // Show button if scrolled more than 300px from bottom
+        setShowScrollButton(scrollHeight - scrollTop - clientHeight > 300);
+
         //for seen message check
         if (isAtBottom) {
             markChatMessagesAsSeen();
@@ -254,24 +257,6 @@ const Chat = () => {
     }, [selectedChat, socket, setTypingUsers]);
 
     useEffect(() => {
-        if (!socket) return;
-    
-        const handleIncomingMessage = (msg) => {
-            if (msg.chatId === selectedChat?._id) {
-                setMessages(prev => {
-                    // Check if message already exists in state before adding
-                    if (prev.some(m => m._id === msg._id)) return prev;
-                    return [...prev, msg];
-                });
-            }
-        };
-    
-        socket.on("getMessage", handleIncomingMessage);
-    
-        return () => socket.off("getMessage", handleIncomingMessage);
-    }, [socket, selectedChat?._id]);
-
-    useEffect(() => {
         return () => {
             Object.values(typingTimeouts.current).forEach(clearTimeout);
         };
@@ -364,22 +349,6 @@ const Chat = () => {
             console.error("Failed to mark messages as  seen: ", error);
         }
     }
-
-    useEffect(() => {
-        if (!user?._id || !userChats.length || notifications.length > 0) return;
-    
-        const unseen = [];
-        userChats.forEach(chat => {
-            const lastMsg = chat.lastMessage;
-                
-            // Check if last message exists, is from others, and is unseen by me
-            if (lastMsg && lastMsg.senderId !== user._id && !lastMsg.seenBy?.includes(user._id)) {
-                    
-                unseen.push({ ...lastMsg, chatId: chat._id });
-            }
-        });
-        setNotifications(unseen);
-    }, [userChats, user?._id]);
 
     return (
     
@@ -562,7 +531,7 @@ const Chat = () => {
                                 const sender = selectedChat?.members?.find(mem => mem._id === m.senderId);
 
                                 return (
-                                    <div key={m._id} className={`flex flex-col ${isSender ? "items-end" : "items-start"}`}>
+                                    <div key={m._id} className={`flex flex-col ${isSender ? "items-end mr-4" : "items-start ml-4"}`}>
 
                                         {/* Show name if it's a group chat and NOT the current user */}
                                         {selectedChat.isGroupChat && !isSender && (
@@ -582,15 +551,26 @@ const Chat = () => {
                                 )
                             })}
 
-                            {typingUsers[selectedChat._id]?.length > 0 && (
-                                <div className="text-gray-400 italic px-2 py-1 text-sm">
-                                    {selectedChat.isGroupChat
-                                        ? typingUsers[selectedChat._id].length > 1
-                                            ? "Multiple people are typing..."
-                                            : `${typingUsers[selectedChat._id][0]} is typing...`
-                                        : "Typing..."}
-                                </div>
-                            )}
+                                {/* Scroll to bottom button */}
+                                {showScrollButton && (
+                                    <button
+                                        onClick={scrollToBottom}
+                                        className="absolute right-1 bottom-24 p-2 bg-white text-[#3594b6] rounded-full shadow-lg hover:bg-gray-200 border transition z-50 cursor-pointer"
+                                        >
+                                            <MoveDown />
+                                        </button>
+                        
+                                )}
+
+                                {typingUsers[selectedChat._id]?.length > 0 && (
+                                    <div className="text-gray-400 italic px-2 py-1 text-sm">
+                                        {selectedChat.isGroupChat
+                                            ? typingUsers[selectedChat._id].length > 1
+                                                ? "Multiple people are typing..."
+                                                : `${typingUsers[selectedChat._id][0]} is typing...`
+                                            : "Typing..."}
+                                    </div>
+                                )}
                             
                             </div>
 
