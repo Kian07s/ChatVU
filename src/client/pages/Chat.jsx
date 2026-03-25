@@ -4,23 +4,34 @@ import {ChatContext} from "../../Context/ChatContext";
 import { useFetchRecipientUser } from "../hooks/useFetchRecipient";
 import { IoPaperPlane } from "react-icons/io5";
 import { FaInfoCircle, FaArchive } from "react-icons/fa";
-import { ChevronLeft, MoveDown } from "lucide-react";
+import { ChevronLeft, MoveDown, Paperclip } from "lucide-react";
 import UserChat from "../components/chat/UserChat";
 import NewChat from "../components/chat/NewChat";
 import GroupInfo from "../components/chat/GroupInfo";
-import { patchRequest, baseUrl, getRequest, postRequest } from "../../utils/services";
+import { patchRequest, baseUrl, getRequest, postRequest, postMultipartRequest } from "../../utils/services";
+import messageSend from "../../assets/messageSend.mp3";
+import { toast } from "react-hot-toast";
+
 
 const Chat = () => {
     const [showNewChat, setShowNewChat] = useState(false); //for searching new chats
     const [chatSearch, setChatSearch] = useState(""); //for searching through active chats
     const [messageDrafts, setMessageDrafts] = useState({}); //bound message inputs to chats
     const [chatListView, setChatListView] = useState("active");  //state to switch between active chats and archive
-    const typingTimeouts = useRef({});
-    const messagesEndRef = useRef(null); //used for scroll container to stick to bottom
-    const [isAtBottom, setIsAtBottom] = useState(true); //state to check where user is for scroll
-    const { userChats, isUserChatsLoading, setUserChats, messages, setMessages, notifications, setNotifications, selectedChat, setSelectedChat, socket, typingUsers, setTypingUsers, updateTypingUsers,markMessagesAsSeen, onlineUsers} = useContext(ChatContext); 
     const [view, setView] = useState("messages"); //to be able to show group info
     const [showScrollButton, setShowScrollButton] = useState(false);
+    const [isAtBottom, setIsAtBottom] = useState(true); //state to check where user is for scroll
+    const [newMessageBoundary, setNewMessageBoundary] = useState(null);
+    const typingTimeouts = useRef({});
+    const newMessagesRef = useRef(null); //to identify the new messages to put a new Messages line
+    const messagesEndRef = useRef(null); //used for scroll container to stick to bottom
+    const textareaRef = useRef(null);
+    const sendSound = useRef(null); //send message sound effect
+    const { userChats, isUserChatsLoading, setUserChats, messages, setMessages, notifications, setNotifications, selectedChat, setSelectedChat, socket, typingUsers, setTypingUsers, updateTypingUsers, onlineUsers} = useContext(ChatContext); 
+    //for file sending and preview
+    const [fileDrafts, setFileDrafts] = useState({}); // Stores the actual File object
+    const [previewDrafts, setPreviewDrafts] = useState({}); // Stores the base64/URL for UI
+    const fileInputRef = useRef(null); // To trigger the hidden input
 
     const { user } = useContext(AuthContext); 
     const { recipientUser } = useFetchRecipientUser({
@@ -61,6 +72,11 @@ const Chat = () => {
             //Then sort by latest message date
             return new Date(b.updatedAt) - new Date(a.updatedAt);
         });
+
+        //Initialize sound effects
+        sendSound.current = new Audio(messageSend);
+        sendSound.current.volume = 0.2;     // 20% volume
+
 
     //get chat members other than the user themselves
     const getRecipients = (chat) => {
@@ -117,7 +133,7 @@ const Chat = () => {
         const isCurrentlyPinned = targetChat?.pinnedBy?.some(id => id?.toString() === user?._id?.toString());
 
         if (!isCurrentlyPinned && pinnedCount >= 5) {
-            alert("You can only pin up to 5 chats.");
+            toast.error("You can only pin up to 5 chats.");
             return;
         }
 
@@ -138,6 +154,32 @@ const Chat = () => {
             console.error("Pin error:", error);
         }
     };
+
+    //find first unread message
+    const firstUnreadIndex = messages?.findIndex((m) => m.senderId !== user._id && !m.seenBy?.includes(user._id));
+
+    //runs every time the text box changes to resize it
+    useEffect(() => {
+        if (textareaRef.current) {
+            textareaRef.current.style.height = "auto";
+            // Set height to match the internal content (scrollHeight)
+            textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+        }
+    }, [messageDrafts[selectedChat?._id]]);
+
+
+    //set new Messages line
+    useEffect(() => {
+        if (!selectedChat || !messages?.length) {
+            return;
+        }
+
+        //find first unread message
+        const firstUnreadIndex = messages?.findIndex((m) => m.senderId !== user._id && !m.seenBy?.includes(user._id));
+
+        setNewMessageBoundary(firstUnreadIndex !== -1 ? firstUnreadIndex : null);
+    }, [selectedChat?._id, messages.length]);
+
 
     const handleScroll = (e) => {
         const { scrollTop, scrollHeight, clientHeight } = e.target;
@@ -189,23 +231,39 @@ const Chat = () => {
         }
     }, [messages, selectedChat?._id ? typingUsers[selectedChat?._id] : null]);
 
-    //go to most recent message on opening chat
+    //go to first unread message on opening chat
     useEffect(() => {
-        scrollToBottom();
-    }, [selectedChat]);
+        setTimeout(() => {
+            if (newMessageBoundary !== null && newMessagesRef.current) {
+                newMessagesRef.current.scrollIntoView({
+                    behavior: "auto",
+                    block: "center"
+                });
+            } else {
+                scrollToBottom();
+            }
+        }, 50);
+    }, [selectedChat, newMessageBoundary]);
 
     const handleSendMessage = async () => {
-        const currentText = messageDrafts[selectedChat?._id];
-        if (!currentText?.trim()) {
+        const currentText = messageDrafts[selectedChat?._id] || "";
+        const currentFile = fileDrafts[selectedChat?._id];
+
+        if (!currentText?.trim() && !currentFile) {
             return;
         }
 
+        const formData = new FormData();
+        formData.append("chatId", selectedChat._id || "");
+        formData.append("senderId", user._id || "");
+        formData.append("text", currentText.trim());
+        
+        if (currentFile) {
+            formData.append("file", currentFile);
+        }
+
         // Call API to save to MongoDB
-        const response = await postRequest(`${baseUrl}/messages`, JSON.stringify({
-            chatId: selectedChat._id,
-            senderId: user._id,
-            text: currentText
-        }));
+        const response = await postMultipartRequest(`${baseUrl}/messages`, formData);
     
         if (response.error) {
             return console.log(response.error);
@@ -219,6 +277,14 @@ const Chat = () => {
         // Update UI
         setMessages((prev) => [...prev, response]);
 
+        clearFile();
+
+        //play send sound effect
+        if (sendSound.current) {
+            sendSound.current.currentTime = 0;
+            sendSound.current.play().catch(() => {});
+        }
+
         //Move chat to top of list by updating userChats
         setUserChats(prev => {
             const updatedChat = {
@@ -231,6 +297,7 @@ const Chat = () => {
             return [updatedChat, ...otherChats];
 
         });
+        
         // scroll down for own messages**
         scrollToBottom();
     };
@@ -274,7 +341,7 @@ const Chat = () => {
         const diffInHours = Math.floor(diffInMins / 60);
         if (diffInHours < 24) return `${diffInHours} hours ago`;
         const diffInDays = Math.floor(diffInHours / 24);
-        return `${diffInDays} days ago`;
+        return `${diffInDays} day(s) ago`;
     };
 
     const handleTyping = (text) => {
@@ -309,7 +376,7 @@ const Chat = () => {
     }
 
     const markChatMessagesAsSeen = async() => {
-        if (!selectedChat || !messagesEndRef?.current) {
+        if (!selectedChat || !messages?.length || !messagesEndRef?.current) {
             return;
         }
         const container = messagesEndRef.current;
@@ -320,6 +387,8 @@ const Chat = () => {
         if (!unseenMessages.length || !atBottom) return;
 
         setMessages(prev => prev.map(m => {
+                if (!m) return m;
+
                 if (!m.seenBy?.includes(user._id)) {
                     return { ...m, seenBy: [...(m.seenBy || []), user._id] };
                 }
@@ -329,7 +398,7 @@ const Chat = () => {
 
         // Update userChats lastMessage seenBy too
         setUserChats(prev => prev.map(c => {
-            if (c._id === selectedChat._id) {
+            if (c._id === selectedChat._id && c.lastMessage) {
                 const updatedLastMessage = {
                     ...c.lastMessage,
                     seenBy: [...(c.lastMessage.seenBy || []), user._id]
@@ -350,6 +419,89 @@ const Chat = () => {
         }
     }
 
+    //for formatting dates for messages
+    const formatMessageDate = (dateString) => {
+        const messageDate = new Date(dateString);
+        const now = new Date();
+
+        // Reset hours to compare just the calendar days
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfYesterday = new Date(startOfToday);
+        startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+        const startOfMessageDay = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate());
+
+        if (startOfMessageDay.getTime() === startOfToday.getTime()) {
+            return "Today";
+        } else if (startOfMessageDay.getTime() === startOfYesterday.getTime()) {
+            return "Yesterday";
+        } else {
+            const diffInDays = Math.floor((startOfToday - startOfMessageDay) / (1000 * 60 * 60 * 24));
+        
+            if (diffInDays < 7) {
+                // Returns "Monday", "Tuesday", etc.
+                return messageDate.toLocaleDateString(undefined, { weekday: 'long' });
+            } else {
+                // Returns extended date
+                return messageDate.toLocaleDateString(undefined, { 
+                    day: 'numeric', 
+                    month: 'long',
+                    year: 'numeric' 
+                });
+            }
+        }
+    };
+
+    //for selecting a file
+    const handleFileSelect = (e) => {
+        const file = e.target.files[0];
+        if (!file || !selectedChat) {
+            return;
+        }
+
+        const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
+
+        if (!allowedTypes.includes(file.type)) {
+            toast.error("Only images, PDFs, and Word documents are allowed.");
+            e.target.value = ""; // Reset input
+            return;
+        }
+
+        // Store file in the specific chat's draft
+        setFileDrafts(prev => ({ ...prev, [selectedChat._id]: file }));
+
+        //if it's an image, create an image preview
+        if (file.type.startsWith("image/")) {
+            const reader = new FileReader();
+            reader.onloadend = () => setPreviewDrafts(prev => ({ ...prev, [selectedChat._id]: reader.result }));
+            reader.readAsDataURL(file);
+        }
+        else {
+            // For non-images (PDFs, etc.), just show the name
+            setPreviewDrafts(prev => ({ ...prev, [selectedChat._id]: { name: file.name, type: "file" } }));
+        }
+    };
+
+    const clearFile = () => {
+        if (!selectedChat) {
+            return;
+        }
+        
+        setFileDrafts(prev => {
+            const newState = { ...prev };
+            delete newState[selectedChat._id];
+            return newState;
+        });
+
+        setPreviewDrafts(prev => {
+            const newState = { ...prev };
+            delete newState[selectedChat._id];
+            return newState;
+        });
+
+        if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+
     return (
     
     <div className="flex w-full bg-white" style={{ height: "calc(100vh - 4rem)" }}>
@@ -364,7 +516,7 @@ const Chat = () => {
         )}
 
         {/* chat list */}
-        <div className="w-1/3 border-r flex flex-col" style={ {minHeight: 0}}>
+        <div className="w-[350px]  min-w-[300px] flex-shrink-0 border-r flex flex-col" style={ {minHeight: 0}}>
             {/* header */}
             <div className="h-14 flex items-center px-4 border-b bg-white">
                 <h1 className="font-semibold text-[#3594b6] text-xl">Chats</h1>
@@ -436,7 +588,9 @@ const Chat = () => {
                             chat={chat}
                             user={user}
                             onlineUsers={onlineUsers}
-                            draft={messageDrafts[chat._id]}
+                            draft={
+                                messageDrafts[chat._id] || fileDrafts[chat._id] ? (messageDrafts[chat._id] ? messageDrafts[chat._id] : "Attachment") : null
+                            }
                             onClick={() => {
                                 setSelectedChat(chat);
                                 setView("messages");
@@ -461,7 +615,9 @@ const Chat = () => {
                                 chat={chat}
                                 user={user}
                                 onlineUsers={onlineUsers}
-                                draft={messageDrafts[chat._id]}
+                                draft={
+                                    messageDrafts[chat._id] || fileDrafts[chat._id] ? (messageDrafts[chat._id] ? messageDrafts[chat._id] : "Attachment") : null
+                                }
                                 onClick={() => {
                                     setSelectedChat(chat);
                                     setView("messages");
@@ -517,7 +673,6 @@ const Chat = () => {
                         </div>
                     )}
                             
-
                     {/* Messages */}
                     {view === "messages" ? (
                         <>
@@ -526,29 +681,112 @@ const Chat = () => {
                                 ref={messagesEndRef}
                                 onScroll={handleScroll}
                             >
-                            {messages?.map((m) => {
+                            {messages?.map((m, index) => {
+                                //Logic to determine if should show a Date Separator
+                                const messageDateLabel = formatMessageDate(m.createdAt);
+                                const previousMessage = messages[index - 1];
+                                const previousDateLabel = previousMessage ? formatMessageDate(previousMessage.createdAt) : null;
+                                // Only show the date bubble if it's the first message or the date label changed
+                                const showDateSeparator = messageDateLabel !== previousDateLabel;
+
+                                //Sender Logic
                                 const isSender = m.senderId === user._id;
                                 const sender = selectedChat?.members?.find(mem => mem._id === m.senderId);
+                                //find last message user sent to put delivered/seen under
+                                const lastSentMessageId = [...messages].reverse().find(m => m.senderId === user._id)?._id;
 
+                                
                                 return (
-                                    <div key={m._id} className={`flex flex-col ${isSender ? "items-end mr-4" : "items-start ml-4"}`}>
-
-                                        {/* Show name if it's a group chat and NOT the current user */}
-                                        {selectedChat.isGroupChat && !isSender && (
-                                            <span className="text-[10px] text-gray-500 ml-2 mb-1">
-                                                {sender?.name || "Unknown User"}
-                                            </span>
+                                    <div key={m._id}>
+                                        {/* The Date Separator UI */}
+                                        {showDateSeparator && (
+                                            <div className="flex justify-center my-6">
+                                                <span className="bg-gray-200 text-gray-600 text-[10px] uppercase tracking-wider px-3 py-1 rounded-md font-bold shadow-sm">
+                                                    {messageDateLabel}
+                                                </span>
+                                            </div>
                                         )}
+
+                                        {/* New Messages Divider */}
+                                        {index === newMessageBoundary && (
+                                            <div
+                                                ref={newMessagesRef}
+                                                className="flex items-center my-3"
+                                            >
+                                                <div className="flex-grow border-t border-gray-300"></div>
+                                                <span className="px-3 text-xs text-gray-500 font-semibold">
+                                                    New Messages
+                                                </span>
+                                                <div className="flex-grow border-t border-gray-300"></div>
+                                            </div>
+                                        )}
+
+                                        {m.type === "system" ? (
+                                            <div className="flex justify-center my-4">
+                `                               <span className="bg-gray-100 text-gray-500 text-[11px] px-4 py-1 rounded-full italic shadow-sm border border-gray-200">
+                                                    {m.text}
+                                                </span>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className={`flex flex-col ${isSender ? "items-end mr-4" : "items-start ml-4"}`}>
+                                                    {/* Show name if it's a group chat and NOT the current user */}
+                                                    {selectedChat.isGroupChat && !isSender && (
+                                                        <span className="text-[10px] text-gray-500 ml-2 mb-1">
+                                                            {sender?.name || "Unknown User"}
+                                                        </span>
+                                                    )}
                                         
-                                        <div className={`max-w-[70%] p-2 rounded-2xl message-bubble message-animation 
-                                            ${m.senderId === user._id ? "bg-[#3594b6] text-white self-end rounded-tr-none bubble-right" : "bg-gray-200 self-start rounded-tl-none bubble-left"}`} >
-                                            {m.text}
-                                            <span className="block text-[10px] opacity-70 text-right">
-                                                {m.createdAt ? new Date(m.createdAt).toLocaleTimeString() : ""}
-                                            </span>
-                                        </div>
+                                                    <div className={`max-w-[70%] p-2 rounded-2xl message-bubble message-animation whitespace-pre-wrap
+                                                        ${m.senderId === user._id ? "bg-[#3594b6] text-white self-end rounded-tr-none bubble-right" : "bg-gray-200 self-start rounded-tl-none bubble-left"}`} >
+
+                                                            {/* Render Image if it exists */}
+                                                            {m.fileUrl && (m.type === "image" || m.fileUrl.match(/\.(jpeg|jpg|gif|png|webp)$/i)) && (
+                                                                <div className="mb-2">
+                                                                    <img 
+                                                                        src={`http://localhost:5050${m.fileUrl}`} 
+                                                                        alt="Sent attachment" 
+                                                                        className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+                                                                        onClick={() => window.open(`http://localhost:5050${m.fileUrl}`, '_blank')}
+                                                                    />
+                                                                </div>
+                                                            )}
+
+                                                            {/* Render File Link if it's not an image */}
+                                                            {m.fileUrl && m.type === "file" && (
+                                                                <a 
+                                                                    href={`http://localhost:5050${m.fileUrl}`} 
+                                                                    target="_blank" 
+                                                                    rel="noopener noreferrer"
+                                                                    className="flex items-center gap-2 p-2 mb-2 bg-black/10 rounded-lg text-xs font-medium hover:bg-black/20 transition-colors"
+                                                                >
+                                                                    <Paperclip size={14} />
+                                                                    <span className="truncate max-w-[150px]">View Attachment</span>
+                                                                </a>
+                                                            )}
+
+                                                            {m.text && <p className="text-sm">{m.text}</p>}
+                                                            <span className="block text-[10px] opacity-70 text-right">
+                                                                {m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], {
+                                                                    hour: 'numeric',
+                                                                    minute: '2-digit'
+                                                                }) : ""}
+                                                            </span>
+                                                    </div>
+                                                </div>
+
+                                                {isSender && !selectedChat.isGroupChat && m._id === lastSentMessageId && (
+                                                    <span className="block text-[10px] opacity-70 text-right mr-4">
+                                                        {index === messages.length - 1 ? m.seenBy?.includes(recipientUser?._id)
+                                                            ? "Seen"
+                                                            : "Delivered" 
+                                                            : ""}
+                                                    </span>
+                                                )}
+                                            </>
+                                        )}
                                     </div>
-                                )
+                                );
                             })}
 
                                 {/* Scroll to bottom button */}
@@ -575,10 +813,43 @@ const Chat = () => {
                             </div>
 
                             <div className="flex border-t p-3">
+                                {/* Hidden Input */}
+                                <input 
+                                    type="file" 
+                                    ref={fileInputRef} 
+                                    onChange={handleFileSelect} 
+                                    className="hidden" 
+                                />
+                                {/* Paperclip icon for attaching files */}
+                                <button onClick={() => fileInputRef.current.click()} className="mr-2 cursor-pointer hover:bg-gray-200 h-8 w-8 flex justify-center items-center rounded-full">
+                                    <Paperclip/>
+                                </button>
+
                                 {/* Input */}
                                 <div className="flex-1">
-                                    <input 
-                                        type="text"
+                                    
+                                    {/* PREVIEW AREA */}
+                                    {previewDrafts[selectedChat?._id] && (
+                                        <div className="p-2 bg-gray-100 flex items-center relative border-b">
+                                            {typeof previewDrafts[selectedChat?._id] === "string" ? (
+                                                <img src={previewDrafts[selectedChat?._id]} alt="preview" className="h-20 w-20 object-cover rounded-md border" />
+                                            ) : (
+                                                <div className="flex items-center gap-2 p-2 bg-white rounded border text-sm text-gray-600">
+                                                    <span className="font-medium truncate max-w-[200px]">{previewDrafts[selectedChat?._id]?.name}</span>
+                                                </div>
+                                            )}
+                                            <button 
+                                                onClick={clearFile}
+                                                className="absolute top-1 left-22 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600 shadow-md"
+                                            >
+                                                <span className="block w-4 h-4 text-[10px] leading-none">×</span>
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    <textarea
+                                        ref={textareaRef}
+                                        rows="1"
                                         placeholder="Type a message..."
                                         value={messageDrafts[selectedChat?._id] || ""} //find current chat's draft
                                         onChange={(e) => {
@@ -588,9 +859,12 @@ const Chat = () => {
                                         }}
 
                                         onKeyDown={(e) => {
-                                            if (e.key === "Enter") handleSendMessage();
+                                            if (e.key === "Enter" && !e.shiftKey)  {
+                                                e.preventDefault();
+                                                handleSendMessage();
+                                            }
                                         }}
-                                        className="w-full border rounded px-3 py-2 outline-none focus:border-[#3594b6]"
+                                        className="w-full border rounded px-3 py-2 outline-none focus:border-[#3594b6] resize-none overflow-hidden max-h-40"
                                     />
                                 </div>
                                 <button onClick={handleSendMessage} className="flex items-center justify-center h-12 w-12 bg-[#3594b6] text-white rounded-full cursor-pointer ml-4"><IoPaperPlane size={20} /></button>
@@ -603,6 +877,7 @@ const Chat = () => {
                             onBack={() => setView("messages")}
                             setUserChats={setUserChats} 
                             setSelectedChat={setSelectedChat}
+                            updateSelectedChat={setSelectedChat}
                             setView={setView}
                         />
                     )}

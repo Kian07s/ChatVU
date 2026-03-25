@@ -99,3 +99,21 @@ export const getRequest = async(url) => {
     }
 };
 
+export const postMultipartRequest = async(url, formData) => {
+    const response = await fetch(url, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+    });
+
+    try {
+        const data = await response.json();
+        if (!response.ok) {
+            return { error: true, message: data?.message || "Something went wrong" };
+        }
+        return data;
+    } catch(error) {
+        return { error: true, message: "Network or server error" };
+    }
+};
+

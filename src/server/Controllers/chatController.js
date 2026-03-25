@@ -1,5 +1,8 @@
 // 3 API endpoints: create chat, get chats, find a certain chat
+import { Admin } from "mongodb";
 import chatModel from "../Models/chatModel.js";
+import messageModel from "../Models/messageModel.js";
+import userModel from "../Models/userModel.js";
 
 //create a chat 
 const createChat = async(req, res) => {
@@ -39,13 +42,33 @@ const createChat = async(req, res) => {
 
           // Populate members before sending
         const populatedChat = await chatModel.findById(newChat._id).populate("members", "name email");
-          //201 is when a new thing has been created
-          res.status(201).json(populatedChat);
-        
+
+        // Announcement for Group Creation
+        if (isGroupChat) {
+            const adminUser = populatedChat.members.find(m => m._id.toString() === members[0]);
+            await createSystemMessage(newChat._id, `${adminUser?.name || "Someone"} created the group "${groupName}"`);
+        }
+
+        //201 is when a new thing has been created
+        res.status(201).json(populatedChat);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 };
+
+//notify people of group changes
+const createSystemMessage = async (chatId, text) => {
+    try {
+        await messageModel.create({
+            chatId,
+            text,
+            type: "system",
+            senderId: "system"
+        });
+    } catch (error) {
+        console.log("System Message Error:", error);
+    }
+}
 
 //get users chats
 const getUserChats = async(req, res) => {
@@ -107,15 +130,16 @@ const removeGroupMember = async (req, res) => {
     const { memberId, requesterId } = req.body;
 
     try {
-        const chat = await chatModel.findById(chatId);
+        const chat = await chatModel.findById(chatId).populate("members", "name");
 
         if (!chat || !chat.isGroupChat) {
             return res.status(404).json({ message: "Group chat not found" });
         }
 
-        chat.members = chat.members.filter(
-            id => id.toString() !== memberId
-        );
+        const memberToRemove = chat.members.find(m => m._id.toString() === memberId);
+        const adminUser = chat.members.find(m => m._id.toString() === requesterId);
+
+        chat.members = chat.members.filter(m => m._id.toString() !== memberId);
 
         //if after removing only 2 members are left in the group, make it a dm
         if (chat.members.length === 2) {
@@ -149,13 +173,17 @@ const removeGroupMember = async (req, res) => {
                 replacedBy: "dm",
                 chat: dmPopulated
             });
-
         }
+
         if (chat.members.length <= 1) {
             await chat.deleteOne();
+            return res.status(200).json({ message: "Group deleted" });
         }
 
         await chat.save();
+
+        // Create announcement
+        await createSystemMessage(chatId, `${memberToRemove?.name || "A user"} was removed by ${adminUser?.name || "Admin"}`);
 
         const updatedChat = await chatModel.findById(chatId).populate("members", "name email");
         res.status(200).json(updatedChat);
@@ -171,15 +199,17 @@ const leaveGroup = async(req, res) => {
     const { userId } = req.body;
 
     try {
-        const chat = await chatModel.findById(chatId);
+        const chat = await chatModel.findById(chatId).populate("members", "name");
 
         if (!chat || !chat.isGroupChat) {
             return res.status(404).json({ message: "Group chat not found" });
         }
 
-        //remove leaving user
-        chat.members = chat.members.filter(id => id.toString() !== userId);
+        const leavingUser = chat.members.find(m => m._id.toString() === userId);
 
+        //remove leaving user
+        chat.members = chat.members.filter(member => member._id.toString() !== userId);
+        
         // If leaving user is admin and others remain, force new admin
         if (chat.groupAdmin.toString() === userId && chat.members.length > 0) {
             chat.groupAdmin = chat.members[0]; 
@@ -191,6 +221,9 @@ const leaveGroup = async(req, res) => {
         }
 
         await chat.save();
+
+        await createSystemMessage(chatId, `${leavingUser?.name || "A user"} left the group`);
+
         const updatedChat = await chatModel.findById(chatId).populate("members", "name email");
         res.status(200).json(updatedChat);
 
@@ -202,18 +235,21 @@ const leaveGroup = async(req, res) => {
 //changing group name
 const changeGroupName = async(req, res) => {
     const { chatId } = req.params;
-    const { newGroupName } = req.body;
+    const { newGroupName, requesterId } = req.body;
     
     try {
+        const adminUser = await userModel.findById(requesterId);
         const updatedChat = await chatModel.findByIdAndUpdate(
             chatId,
             { groupName: newGroupName },
             { new: true }
-        ).populate("members", "-password");
+        ).populate("members", "name email");
 
         if (!updatedChat) {
             return res.status(404).json("Chat not found");
         }
+
+        await createSystemMessage(chatId, `${adminUser?.name || "Admin"} renamed the group to "${newGroupName}"`);
 
         res.status(200).json(updatedChat);
         
@@ -227,29 +263,34 @@ const addMembers = async(req, res) => {
     const { chatId } = req.params;
     const { memberIds, requesterId } = req.body;
 
-    const chat = await chatModel.findById(chatId);
+    try {
+        const chat = await chatModel.findById(chatId);
+        const adminUser = await userModel.findById(requesterId);
+        const addedUsers = await userModel.find({ _id: { $in: memberIds } });
 
-    if (!chat) {
-        return res.status(404).json({ message: "Chat not found" });
+        if (!chat) {
+            return res.status(404).json({ message: "Chat not found" });
+        }
+
+        if (chat.groupAdmin.toString() !== requesterId) {
+            return res.status(403).json({ message: "Only admin can add members" });
+        }
+
+        const existingIds = chat.members.map(id => id.toString());
+        const newMembers = memberIds.filter(id => !existingIds.includes(id));
+    
+        chat.members.push(...newMembers);
+        await chat.save();
+
+        const names = addedUsers.map(u => u.name).join(", ");
+        await createSystemMessage(chatId, `${adminUser?.name} added ${names} to the group`);
+    
+        const updatedChat = await chatModel.findById(chatId).populate("members", "name email");
+    
+        res.status(200).json(updatedChat);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
     }
-
-    if (chat.groupAdmin.toString() !== requesterId) {
-        return res.status(403).json({ message: "Only admin can add members" });
-    }
-
-    const existingIds = chat.members.map(id => id.toString());
-
-    const newMembers = memberIds.filter(
-        id => !existingIds.includes(id)
-      );
-    
-      chat.members.push(...newMembers);
-    
-      await chat.save();
-    
-      const updatedChat = await chatModel.findById(chatId).populate("members", "name email");
-    
-      res.status(200).json(updatedChat);
 }
 
 //archive chat
@@ -280,7 +321,7 @@ const archiveChat = async(req, res) => {
             chat.archivedBy.push(requesterId);
         }
 
-        await chat.save();
+        await chat.save({ timestamps: false });
 
         const populatedChat = await chatModel.findById(chatId).populate("members", "name email");
         res.status(200).json(populatedChat);
@@ -319,7 +360,7 @@ const pinChat = async(req, res) => {
             chat.pinnedBy = [...currentPinned, requesterId];
         }
 
-        await chat.save();
+        await chat.save({ timestamps: false });
 
         const populatedChat = await chatModel.findById(chatId).populate("members", "name email");
         res.status(200).json(populatedChat);

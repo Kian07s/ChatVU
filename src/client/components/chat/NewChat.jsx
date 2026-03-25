@@ -167,7 +167,7 @@ const NewChat = ({ onClose, setSelectedChat, setView }) => {
                 {/*if the type of chat is not chosen, show options*/}
                 {step === "type" && (
                     <div>
-                        <button onClick={() => setStep("dm")} className="w-full h-20 border cursor-pointer flex justify-center items-center hover:bg-gray-100">
+                        <button onClick={() => setStep("dm")} className="w-full h-20 border border-b-0 cursor-pointer flex justify-center items-center hover:bg-gray-100">
                             <FaUser className="text-2xl m-2 text-[#3594b6]" />1 on 1 Chat
                         </button>
                         <button onClick={() => setStep("group-members")} className="w-full h-20 border cursor-pointer flex justify-center items-center hover:bg-gray-100">

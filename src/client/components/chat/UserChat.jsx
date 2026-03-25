@@ -1,6 +1,6 @@
 import { useFetchRecipientUser } from "../../hooks/useFetchRecipient.js";
 import { FaUser, FaUsers, FaEllipsisV, FaArchive, FaThumbtack } from "react-icons/fa";
-import { ArchiveRestore, PinOff } from 'lucide-react';
+import { ArchiveRestore, PinOff, Image, File } from 'lucide-react';
 import { useState, useEffect, useRef } from "react";
 import { useContext } from "react";
 import { ChatContext } from "../../../Context/ChatContext.jsx";
@@ -22,7 +22,9 @@ const UserChat = ({ chat, user, onClick, onlineUsers, isActive, draft, onArchive
     const isOnline = onlineUsers?.some((u) => u?.userId === recipientUser?._id);
 
     //for chat notifications
-    const thisChatNotifications = notifications.filter(n => n && n.chatId === chat._id);
+    // Find the single notification object for this chat
+    const chatNotif = notifications.find(n => n && n.chatId === chat._id);
+    const unreadCount = chatNotif?.count || 0;
 
 
     //dropdown should close whenever clicking outside
@@ -54,7 +56,41 @@ const UserChat = ({ chat, user, onClick, onlineUsers, isActive, draft, onArchive
         const onlineEntry = onlineUsers.find(u => u.userId === recipientUser?._id);
             if (!onlineEntry) return "bg-gray-400"; // Offline
             return onlineEntry.status === "idle" ? "bg-yellow-500" : "bg-green-500";
-};
+    };
+
+    const formatMessageDate = (dateString, isChatList = false) => {
+        const messageDate = new Date(dateString);
+        const now = new Date();
+    
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfYesterday = new Date(startOfToday);
+        startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    
+        const startOfMessageDay = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate());
+    
+        if (startOfMessageDay.getTime() === startOfToday.getTime()) {
+            // If it's for the Sidebar/Chat List, show the TIME. 
+            // If it's for the Date Separator in the chat, show "Today".
+            return isChatList 
+                ? messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                : "Today";
+        } else if (startOfMessageDay.getTime() === startOfYesterday.getTime()) {
+            return "Yesterday";
+        } else {
+            const diffInDays = Math.floor((startOfToday - startOfMessageDay) / (1000 * 60 * 60 * 24));
+        
+            if (diffInDays < 7) {
+                return messageDate.toLocaleDateString(undefined, { weekday: 'long' });
+            } else {
+                // Updated to the Day/Month/Year format you asked for earlier
+                return messageDate.toLocaleDateString('en-GB', { 
+                    day: 'numeric', 
+                    month: 'short', // "Mar" instead of "March" saves space in the sidebar
+                    year: 'numeric' 
+                });
+            }
+        }
+    };
     
     return (
             <div onClick={onClick} className={`flex-1 flex w-full text-left px-4 py-3 relative transition border-b hover:bg-gray-100 ${isActive ? "bg-gray-100 border-l-4 border-[#3594b6]" : "bg-white"}`}>
@@ -82,7 +118,11 @@ const UserChat = ({ chat, user, onClick, onlineUsers, isActive, draft, onArchive
 
                 {/* chatname and most recent text */}
                 <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{chatName}</div>
+                    <div className="flex justify-between">
+                        <div className="font-medium truncate">{chatName}</div>
+                        <div className="text-[10px] text-gray-400 ml-2 whitespace-nowrap"> {formatMessageDate(chat?.lastMessage?.createdAt || chat?.updatedAt)}</div>
+                    </div>
+                    
                     {/* Show draft only if it exists and this chat is not currently selected */}
                     <div className={`text-sm truncate ${draft && !isActive ? "text-[#3594b6] italic font-medium" : ""}`}>
                         {draft && !isActive ? (
@@ -104,17 +144,26 @@ const UserChat = ({ chat, user, onClick, onlineUsers, isActive, draft, onArchive
                                     </span>
                                 )}
                                 <span className="truncate">
-                                    {chat.lastMessage?.text || "No messages yet"}
+                                    {chat.lastMessage?.fileUrl ? (
+                                        <span className="flex items-center gap-1 text-gray-500">
+                                            {chat.lastMessage.type === "image" ?
+                                                 <span className="flex"><Image size={16} />Photo</span> : 
+                                                 <span className="flex"><File size={16} />Document</span>
+                                            }
+                                        </span>
+                                    ) : (
+                                        chat.lastMessage?.text || "No messages yet"
+                                    )}
                                 </span>
                             </div>
                         )}
                     </div>
                 </div>
 
-                {thisChatNotifications.length > 0 && (
+                {unreadCount > 0 && (
                     <div className="flex items-center">
                         <div className="flex items-center bg-[#3594b6] text-white text-sm h-8 w-8 rounded-full justify-center">
-                            {thisChatNotifications.length}
+                            {unreadCount}
                         </div>
                     </div>
                 )}

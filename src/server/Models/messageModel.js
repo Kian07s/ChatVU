@@ -12,11 +12,19 @@ const messageSchema = new mongoose.Schema({
     },
     text: {
         type: String,
-        required: true
+        required: false,
+        default: ""
+    },
+    fileUrl: {
+        type: String,
     },
     seenBy: {
         type: [String], //array of users Ids who have seen message
         default: []
+    },
+    type: {
+        type: String,
+        default: "user" //user or system for change in group chats announcments
     }
 }, {
     timestamps: true

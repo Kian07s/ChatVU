@@ -1,4 +1,5 @@
 import React, { useContext } from 'react';
+import { Toaster } from 'react-hot-toast';
 import {Routes, Route, Navigate} from 'react-router-dom';
 import Chat from './client/pages/Chat';
 import Register from './client/pages/Register';
@@ -13,6 +14,7 @@ function App() {
   return (
     //set user to be able to use id for chats
     <ChatContextProvider>
+      <Toaster position="top-center" reverseOrder={false} /> {/* to implement toaster for better UI */}
       <div>
         <NavBar/>
         <div>
