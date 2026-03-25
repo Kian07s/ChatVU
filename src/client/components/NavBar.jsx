@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useState, useContext } from "react";
+import { useState, useContext, useEffect, useRef } from "react";
 import { FaUserCircle } from "react-icons/fa";
 import { AuthContext } from "../../Context/AuthContext";
 
@@ -9,11 +9,26 @@ const NavBar = () => {
     const loggedIn = !!user;
     //open/close dropdown
     const [dropDownOpen, setDropDownOpen] = useState(false);
+    // Create a reference for the dropdown container
+    const dropdownRef = useRef(null);
 
     const signOut = () => {
         localStorage.removeItem("User");
         window.location.reload();
     };
+
+    // Handle clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            // If the dropdown is open and the click is not inside the dropdownRef
+            if (dropDownOpen && dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setDropDownOpen(false);
+            }
+        };
+
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, [dropDownOpen]);
 
     return (
     <div className="bg-[#3594b6] h-16 w-full flex items-center">
@@ -30,7 +45,7 @@ const NavBar = () => {
                     <Link to="/register" className="text-white cursor-pointer hover:underline">Register</Link>
               </div>
             ) : (
-                <div className="relative">
+                <div className="relative" ref={dropdownRef}>
                     <button
                         onClick={() => setDropDownOpen(!dropDownOpen)}
                         className="text-white text-2xl focus:outline-none cursor-pointer"

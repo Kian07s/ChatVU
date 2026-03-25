@@ -12,7 +12,6 @@ import userModel from "./Models/userModel.js";
 
 // Tell dotenv where .env is
 dotenv.config({ path: path.resolve('../../.env') });
-
 const app = express();
 
 //Create the HTTP Server using the express app
@@ -28,6 +27,7 @@ const io = new Server(httpServer, {
     }
 });
 
+  
 app.use(cors({
     origin: "http://localhost:5173",
     credentials: true,
@@ -35,12 +35,13 @@ app.use(cors({
     allowedHeaders: ["Content-Type", "Authorization"],
   }));
 
-  
 //allows use of json data
 app.use(express.json());
+app.use("/uploads", express.static("uploads"));
+
 app.use("/api/users", userRoute);
 app.use("/api/chats", chatRoute);
-app.use("/api/messages", messageRoute);
+app.use("/api/messages", messageRoute(io));
 
 
 app.get("/", (req, res) => {

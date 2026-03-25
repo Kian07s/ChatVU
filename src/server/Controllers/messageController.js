@@ -2,23 +2,29 @@ import messageModel from "../Models/messageModel.js";
 import chatModel from "../Models/chatModel.js";
 
 //create message 
-const createMessage = async(req, res) => {
+const createMessage = async (req, res) => {
     //get message info
     const { chatId, senderId, text } = req.body;
 
+    const cleanText = (text === "undefined" || !text) ? "" : text;
+
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+    const fileType = req.file ? (req.file.mimetype.startsWith("image") ? "image" : "file") : "user";
+
     //create a new message
-    const message = new messageModel({chatId, senderId, text});
+    const message = new messageModel({chatId, senderId, text: cleanText, fileUrl, type: fileType, seenBy: [senderId]});
 
     try {
         const response = await message.save();
 
         //Update the Chat's "updatedAt" to bring it to the top
-        await chatModel.findByIdAndUpdate(chatId, { lastMessage: response }, { new: true });
+        await chatModel.findByIdAndUpdate(chatId, { lastMessage: response, updatedAt: new Date()}, { new: true });
 
         res.status(200).json(response);
 
     } catch (error) {
         res.status(500).json(error);
+        console.error("Backend Error:", error);
     }
 };
 //get existing messages
@@ -40,6 +46,7 @@ const messagesSeen = async(req, res) => {
     console.log("messagesSeen route hit");
     const { userId } = req.body;
     const { chatId } = req.params;
+    const io = req.io;
 
     try {
         const updatedMessages = await messageModel.updateMany(
@@ -50,8 +57,14 @@ const messagesSeen = async(req, res) => {
         const lastMessage = await messageModel.findOne({ chatId }).sort({ createdAt: -1 });
 
         if (lastMessage) {
+             //updates status in chat
+            io.emit("messagesSeenUpdate", {
+                chatId,
+                userId,
+                messageId: lastMessage._id
+            });
             await chatModel.findByIdAndUpdate(chatId, {
-                lastMessage
+                lastMessage: lastMessage
             });
         }
 

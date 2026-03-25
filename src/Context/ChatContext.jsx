@@ -1,7 +1,8 @@
-import { createContext, useEffect, useState, useContext } from "react";
+import { createContext, useEffect, useState, useContext, useRef } from "react";
 import { baseUrl, getRequest, patchRequest } from "../utils/services.js";
 import { AuthContext } from "./AuthContext.jsx";
 import { io } from "socket.io-client";
+import messageReceive from "../assets/messageReceive.mp3";
 
 //Initialize the socket OUTSIDE the component so it doesn't 
 // re-connect every time the component re-renders.
@@ -21,6 +22,16 @@ export const ChatContextProvider = ({ children }) => {
     const [messages, setMessages] = useState([]); // Add a state for the incoming socket message
     const [typingUsers, setTypingUsers] = useState({});
     const [notifications, setNotifications] = useState([]); //state for notifications
+    const receiveSound = useRef(new Audio(messageReceive));  //receive message sound effect
+    const selectedChatRef = useRef(selectedChat);
+
+    useEffect(() => {
+        receiveSound.current.volume = 1;
+    }, []);
+
+    useEffect(() => {
+        selectedChatRef.current = selectedChat;
+    }, [selectedChat]);
 
     useEffect(() => {
         // Listen for the connection event
@@ -37,23 +48,39 @@ export const ChatContextProvider = ({ children }) => {
         }
 
         const handleGetMessage = (res) => {
+            const currentSelectedChat = selectedChatRef.current;
+
             // If the message belongs to the chat user is currently looking at
             setMessages((prev) => {
-                return (selectedChat && selectedChat._id === res.chatId) ? [...prev, res] : prev;
+                return (currentSelectedChat && currentSelectedChat._id === res.chatId) ? [...prev, res] : prev;
             });
 
             if (res.senderId === user?._id) return;
 
             // Otherwise, add to notifications
-            const isChatActive = selectedChat && selectedChat._id === res.chatId;
+            const isChatActive = currentSelectedChat &&  currentSelectedChat._id === res.chatId;
 
             if (!isChatActive) {
                 setNotifications((prev) => {
                     // Prevent duplicate notifications for the same message
-                    const isDuplicate = prev.some(n => n?._id === res._id);
-                    if (isDuplicate) return prev;
-                    return [{...res, chatId: res.chatId}, ...prev];
+                    const existingNotifIndex = prev.findIndex(n => n?.chatId === res.chatId);
+                    if (existingNotifIndex !== -1) {
+                        // Increment existing count
+                        const updatedNotifs = [...prev];
+                        updatedNotifs[existingNotifIndex] = {
+                            ...updatedNotifs[existingNotifIndex],
+                            count: (updatedNotifs[existingNotifIndex].count || 1) + 1
+                        };
+                        return updatedNotifs;
+                    }
+                    // Add new notification object
+                    return [{ chatId: res.chatId, count: 1, ...res }, ...prev];
                 });
+
+                if (receiveSound.current) {
+                    receiveSound.current.currentTime = 0;
+                    receiveSound.current.play().catch(() => {});
+                }
             }
 
             setUserChats((prev) => {
@@ -81,12 +108,23 @@ export const ChatContextProvider = ({ children }) => {
         // Listen for the server's reply
         socket.on("getMessage", handleGetMessage);
 
+
+        socket.on("messagesSeenUpdate", ({ chatId, userId, messageId }) => {
+            setMessages(prev => prev.map(m => {
+                if (m._id === messageId && !m.seenBy.includes(userId)) {
+                    return { ...m, seenBy: [...m.seenBy, userId] };
+                }
+                return m;
+            }));
+        });
+
         // Cleanup function: good practice to close listeners
         return () => {
             socket.off("connect")
             socket.off("getMessage", handleGetMessage);
+            socket.off("messagesSeenUpdate");
         };
-    }, [socket, user, selectedChat]); 
+    }, [socket, user]); 
 
     // Clear notifications when opening a chat
     useEffect(() => {
@@ -155,7 +193,8 @@ export const ChatContextProvider = ({ children }) => {
                     if (Array.isArray(unreadRes)) {
                         const newNotifications = unreadRes.map(item => ({
                             chatId: item._id,
-                            count: item.count
+                            count: item.count,
+                            isNew: false
                         }));
 
                         setNotifications(newNotifications);

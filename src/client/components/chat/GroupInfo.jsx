@@ -6,12 +6,13 @@ import { baseUrl, putRequest, getRequest } from "../../../utils/services";
 import { useState, useEffect } from "react";
 import { useContext } from "react";
 import { ChatContext } from "../../../Context/ChatContext";
+import toast from "react-hot-toast";
 
 const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSelectedChat, setView, onClose }) => {
     //save admin in order to only give admin certain functionalities
     const isAdmin = chat.groupAdmin?.toString() === user._id?.toString();
     //for online user recognition
-    const { onlineUsers } = useContext(ChatContext);
+    const { onlineUsers, setMessages } = useContext(ChatContext);
 
     const [isEditingName, setIsEditingName] = useState(false);
     const [newGroupName, setNewGroupName] = useState(chat.groupName);
@@ -30,6 +31,12 @@ const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSe
 
      const isMemberOnline = (memberId) => {
         return onlineUsers?.some((user) => user?.userId === memberId);
+    };
+
+    // a helper to refresh messages
+    const refreshMessages = async () => {
+        const response = await getRequest(`${baseUrl}/messages/${chat._id}`);
+        if (!response.error) setMessages(response);
     };
 
     //Searching for users to chat with. Runs every time the query changes
@@ -70,13 +77,36 @@ const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSe
 
 
     const handleRemove = async (member) => {
-        const confirmed = window.confirm(
-            `Remove ${member.name} from "${chat.groupName}"?`
-        );
-        if (!confirmed) {
-            return;
-        }
+        //create custom toast for better ui
+        toast((t) => (
+            <div className="flex flex-col gap-3">
+                <span className="text-sm font-medium">
+                    Remove <b>{member.name}</b> from the group?
+                </span>
+                <div className="flex justify-center gap-2">
+                    <button 
+                        onClick={() => toast.dismiss(t.id)}
+                        className="px-3 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200"
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={() => {
+                            toast.dismiss(t.id);
+                            executeRemoval(member); // Call the actual logic
+                        }}
+                        className="px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
+                    >
+                        Remove
+                    </button>
+                </div>
+            </div>
+        ), { duration: 6000});
+    };
     
+    const executeRemoval = async(member) => {
+        const loadingToast = toast.loading(`Removing ${member.name}...`);
+
         const response = await fetch(`${baseUrl}/chats/${chat._id}/remove`, {
             method: "PUT",
             headers: {"Content-Type": "application/json"},
@@ -88,67 +118,104 @@ const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSe
     
         const data = await response.json();
 
-        if (!response.ok) return;
+        if (response.ok) {
+             // If the group has been reduced to a DM
+            if (data.replacedBy === "dm") {
+                setUserChats(prev => {
+                    const filtered = prev.filter(c => c._id !== chat._id && c._id !== data.chat._id);
+                    return [...filtered, data.chat];
+                });
+                setSelectedChat(data.chat);
+                setView("messages");
+            } 
+            else {
+                // Normal member removal
+                setUserChats(prev => prev.map(c => c._id === chat._id ? data : c));
+                updateSelectedChat(data);
+            }
+            await refreshMessages();
 
-        // If the group has been reduced to a DM
-        if (data.replacedBy === "dm") {
-            setUserChats(prev => {
-                const filtered = prev.filter(c => c._id !== chat._id && c._id !== data.chat._id);
-                return [...filtered, data.chat];
-            });
-            setSelectedChat(data.chat);
-            setView("messages");
-
-        } 
+            // Success Feedback
+            toast.success(`${member.name} removed`, { id: loadingToast });
+        }
         else {
-            // Normal member removal
-            setUserChats(prev => prev.map(c => c._id === chat._id ? data : c));
-            updateSelectedChat(data);
+            toast.error(data.message || "Failed to remove member", { id: loadingToast });
         }
     };
+
 
     const handleAddMembers = async() => {
         if (selectedMembers.length === 0) {
             return;
         } 
 
-        const confirmed = window.confirm(
-            `Add ${selectedMembers.length} member(s) to "${chat.groupName}"?`
-        );
+        toast((t) => (
+            <div className="flex flex-col gap-3">
+                <span className="text-sm font-medium">
+                    Add <b>{selectedMembers.length}</b> member(s) to the group?
+                </span>
+                <div className="flex justify-end gap-2">
+                    <button onClick={() => toast.dismiss(t.id)} className="px-3 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200">
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={() => {
+                            toast.dismiss(t.id);
+                            executeAddMembers();
+                        }}
+                        className="px-3 py-1 text-xs bg-[#3594b6] text-white rounded hover:bg-[#2a3441]"
+                    >
+                        Add
+                    </button>
+                </div>
+            </div>
+        ), { duration: 6000 });
+    };
 
-        if (!confirmed) {
-            return;
+    const executeAddMembers = async () => {
+        const loadingToast = toast.loading("Adding members...");
+
+        try {
+            const response = await fetch(`${baseUrl}/chats/${chat._id}/add`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json"},
+                body: JSON.stringify({
+                    memberIds: selectedMembers.map(m => m._id),
+                    requesterId: user._id
+                })
+            });
+    
+            const data = await response.json();
+    
+            if (response.ok) {
+                setUserChats(prev => prev.map(c => c._id === chat._id ? data : c));
+                updateSelectedChat(data); // This pushes the new member list up to the parent
+                // Reset UI
+                setStep("type");
+                setSelectedMembers([]);
+                await refreshMessages();
+                toast.success("Members added successfully", { id: loadingToast });
+            } 
+            else {
+                toast.error(data.message || "Failed to add members", { id: loadingToast });
+            }
+            
+            // Update chat state everywhere
+            setUserChats(prev =>
+                prev.map(c => c._id === chat._id ? data : c)
+            );
+    
+            updateSelectedChat(data);
+    
+            // Reset modal state
+            setSelectedMembers([]);
+            setQuery("");
+            setResults([]);
+            setStep("type");
+            setView("groupInfo");
+        }  catch (error) {
+            toast.error("An error occurred", { id: loadingToast });
         }
-
-        const response = await fetch(`${baseUrl}/chats/${chat._id}/add`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json"},
-            body: JSON.stringify({
-                memberIds: selectedMembers.map(m => m._id),
-                requesterId: user._id
-            })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            alert(data.message || "Failed to add members");
-            return;
-        }
-
-        // Update chat state everywhere
-        setUserChats(prev =>
-            prev.map(c => c._id === chat._id ? data : c)
-        );
-
-        updateSelectedChat(data);
-
-        // Reset modal state
-        setSelectedMembers([]);
-        setQuery("");
-        setResults([]);
-        setStep("type");
-        setView("groupInfo");
     };
 
     const handleNameChange = async() => {
@@ -157,57 +224,111 @@ const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSe
             return;
         }
 
-        const confirmed = window.confirm(
-            `Change group name to "${newGroupName}"?`
-        );
-        if (!confirmed) {
-            return;
-        }
+        toast((t) => (
+            <div className="flex flex-col gap-3">
+                <span className="text-sm font-medium">
+                    Change group name to <b>"{newGroupName}"</b>?
+                </span>
+                <div className="flex justify-end gap-2">
+                    <button onClick={() => toast.dismiss(t.id)} className="px-3 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200">
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={() => {
+                            toast.dismiss(t.id);
+                            executeNameChange();
+                        }}
+                        className="px-3 py-1 text-xs bg-[#3594b6] text-white rounded hover:bg-[#2a3441]"
+                    >
+                        Update
+                    </button>
+                </div>
+            </div>
+        ), { duration: 6000 });
+    }
 
-        const response = await putRequest(
-            `${baseUrl}/chats/${chat._id}/changeName`,
-            JSON.stringify({ newGroupName: newGroupName.trim() })
-        );
+    const executeNameChange = async() => {
+        const loadingToast = toast.loading("Updating group name...");
+
+        try {
+            const response = await putRequest(
+                `${baseUrl}/chats/${chat._id}/changeName`,
+                JSON.stringify({ newGroupName: newGroupName.trim(), requesterId: user._id })
+            );
+        
+            if (!response.error) {
+                setUserChats((prev) => prev.map((c) => (c._id === chat._id ? response : c)));
+                updateSelectedChat(response);
+                setIsEditingName(false);
+                await refreshMessages();
     
-        if (response.error) {
-            return console.log("Error updating name", response);
+                toast.success("Group name updated!", { id: loadingToast });
+            }
+            else {
+                toast.error("Failed to update name", { id: loadingToast });
+            }
+    
+            updateSelectedChat(response);
+            setUserChats((prev) => prev.map((c) => (c._id == chat._id ? response : c))
+            );
+    
+            setIsEditingName(false);
+        } catch (error) {
+            toast.error("An error occurred", { id: loadingToast });
         }
-
-        updateSelectedChat(response);
-        setUserChats((prev) => prev.map((c) => (c._id == chat._id ? response : c))
-        );
-
-        setIsEditingName(false);
-        alert("Group name updated!");
     };
 
     //leaving group
     const handleLeave = async()=> {
-        const confirmed = window.confirm(
-            `Do you want to leave "${chat.groupName}"?`
-        );
-        if (!confirmed) {
-            return;
-        }
+        toast((t) => (
+            <div className="flex flex-col gap-3">
+                <span className="text-sm font-medium">
+                    Are you sure you want to leave <b>"{chat.groupName}"</b>?
+                </span>
+                <div className="flex justify-end gap-2">
+                    <button onClick={() => toast.dismiss(t.id)} className="px-3 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200">
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={() => {
+                            toast.dismiss(t.id);
+                            executeLeave();
+                        }}
+                        className="px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
+                    >
+                        Leave
+                    </button>
+                </div>
+            </div>
+        ), { duration: 6000 });
+    };
 
-        const response = await fetch(`${baseUrl}/chats/${chat._id}/leave`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId: user._id })
-        });
-    
-        const data = await response.json();
-    
-        if (!response.ok) {
-            alert(data.message || "Failed to leave group");
-            return;
-        }
+    const executeLeave = async () => {
+        const loadingToast = toast.loading("Leaving group...");
 
-        setUserChats(prev => prev.filter(c => c._id !== chat._id));
-        setSelectedChat(null);
-        setView("messages");
-        onBack();
-    }
+        try {
+            const response = await fetch(`${baseUrl}/chats/${chat._id}/leave`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userId: user._id })
+            });
+        
+            const data = await response.json();
+        
+            if (response.ok) {
+                toast.success("You left the group", { id: loadingToast });
+                setUserChats(prev => prev.filter(c => c._id !== chat._id));
+                setSelectedChat(null);
+                setView("messages");
+                onBack();
+            }
+            else {
+                toast.error(data.message || "Failed to leave", { id: loadingToast });
+            }
+        } catch (error) {
+            toast.error("An error occurred", { id: loadingToast });
+        }  
+    };
 
     return (
         <div className="flex-1 p-4 text-center">
@@ -273,7 +394,7 @@ const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSe
                     )}
 
                     {chat.members.map(member => {
-                        const memberIsAdmin = member._id === chat.groupAdmin?.toString();
+                        const memberIsAdmin = String(member._id) === String(chat.groupAdmin);
 
                         return (
                             <div key={member._id} className="flex items-center p-3 rounded-md shadow-sm">
