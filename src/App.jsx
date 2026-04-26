@@ -8,25 +8,28 @@ import NavBar from './client/components/NavBar';
 import './client/App.css'
 import { AuthContext } from './Context/AuthContext';
 import { ChatContextProvider } from "./Context/ChatContext.jsx";
+import { EncryptionContextProvider } from './Context/EncryptionContext';
 
 function App() {
   const {user} = useContext(AuthContext);
   return (
     //set user to be able to use id for chats
-    <ChatContextProvider>
-      <Toaster position="top-center" reverseOrder={false} /> {/* to implement toaster for better UI */}
-      <div>
-        <NavBar/>
+    <EncryptionContextProvider>
+      <ChatContextProvider>
+        <Toaster position="top-center" reverseOrder={false} /> {/* to implement toaster for better UI */}
         <div>
-          <Routes>
-            <Route path="/" element={user ? <Chat /> : <Login/>} />
-            <Route path="/register" element={user ? <Chat /> : <Register/>} />
-            <Route path="/login" element={user ? <Chat /> : <Login/>} />
-            <Route path="/*" element={<Navigate to="/"/>} />
-          </Routes>
+          <NavBar/>
+          <div>
+            <Routes>
+              <Route path="/" element={user ? <Chat /> : <Login/>} />
+              <Route path="/register" element={user ? <Chat /> : <Register/>} />
+              <Route path="/login" element={user ? <Chat /> : <Login/>} />
+              <Route path="/*" element={<Navigate to="/"/>} />
+            </Routes>
+          </div>
         </div>
-      </div>
-    </ChatContextProvider>
+      </ChatContextProvider>
+    </EncryptionContextProvider>
   )
 }
 

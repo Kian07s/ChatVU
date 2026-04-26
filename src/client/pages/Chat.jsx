@@ -1,4 +1,4 @@
-import { useContext, useState, useEffect, useRef } from "react";
+import { useContext, useState, useEffect, useRef, useCallback } from "react";
 import { AuthContext } from "../../Context/AuthContext";
 import {ChatContext} from "../../Context/ChatContext";
 import { useFetchRecipientUser } from "../hooks/useFetchRecipient";
@@ -11,7 +11,70 @@ import GroupInfo from "../components/chat/GroupInfo";
 import { patchRequest, baseUrl, getRequest, postRequest, postMultipartRequest } from "../../utils/services";
 import messageSend from "../../assets/messageSend.mp3";
 import { toast } from "react-hot-toast";
+import E2EESetupModal from "../components/chat/EncryptionModal";
+import { EncryptionContext } from "../../Context/EncryptionContext";
+import { encryptFile, encryptMessage } from "../../utils/crypto";
+import DecryptText from "../components/chat/DecryptText";
+import SecureFileDisplay from "../components/chat/SecureFileDisplay";
 
+//helper for showing messages and encryption and decryption of individual messages
+const MessageBubble = ({ m, user, selectedChat, recipientUser, isSender, lastSentMessageId, index, messagesLength }) => {
+    const [decryptedFileMeta, setDecryptedFileMeta] = useState(null);
+
+    // Use useCallback to prevent the infinite loop
+    const handleFileDecrypted = useCallback((info) => {
+        setDecryptedFileMeta(info);
+    }, []);
+
+    return (
+        <div className={`flex flex-col ${isSender ? "items-end mr-4" : "items-start ml-4"}`}>
+            {selectedChat.isGroupChat && !isSender && (
+                <span className="text-[10px] text-gray-500 ml-2 mb-1">
+                    {selectedChat.members?.find(mem => mem._id === m.senderId)?.name || "Unknown User"}
+                </span>
+            )}
+
+            <div className={`max-w-[70%] p-2 rounded-2xl message-bubble message-animation whitespace-pre-wrap
+                ${isSender ? "bg-[#3594b6] text-white self-end rounded-tr-none bubble-right" : "bg-gray-200 self-start rounded-tl-none bubble-left"}`} >
+
+                {/* FILE SECTION */}
+                {m.fileUrl && decryptedFileMeta && (
+                    <div className="mb-2">
+                         <SecureFileDisplay 
+                            fileUrl={`http://localhost:5050${m.fileUrl}`} 
+                            fileInfo={decryptedFileMeta} 
+                        />
+                    </div>
+                )}
+
+                {/* TEXT SECTION */}
+                {m.text && (
+                    <p className="text-sm">
+                        <DecryptText 
+                            text={m.text} 
+                            encryptionMeta={m.encryptionMeta} 
+                            onFileDecrypted={(info) => setDecryptedFileMeta(info)} 
+                        />
+                    </p>
+                )}
+
+                <span className="block text-[10px] opacity-70 text-right">
+                    {m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], {
+                        hour: 'numeric',
+                        minute: '2-digit'
+                    }) : ""}
+                </span>
+            </div>
+
+            {/* STATUS SECTION */}
+            {isSender && !selectedChat.isGroupChat && m._id === lastSentMessageId && (
+                <span className="block text-[10px] opacity-70 text-right mr-4">
+                    {index === messagesLength - 1 ? (m.seenBy?.includes(recipientUser?._id) ? "Seen" : "Delivered") : ""}
+                </span>
+            )}
+        </div>
+    );
+};
 
 const Chat = () => {
     const [showNewChat, setShowNewChat] = useState(false); //for searching new chats
@@ -32,8 +95,9 @@ const Chat = () => {
     const [fileDrafts, setFileDrafts] = useState({}); // Stores the actual File object
     const [previewDrafts, setPreviewDrafts] = useState({}); // Stores the base64/URL for UI
     const fileInputRef = useRef(null); // To trigger the hidden input
-
+    
     const { user } = useContext(AuthContext); 
+    const { unlockedKey, isResolvingKey } = useContext(EncryptionContext);
     const { recipientUser } = useFetchRecipientUser({
         chat: selectedChat,
         user
@@ -253,53 +317,104 @@ const Chat = () => {
             return;
         }
 
-        const formData = new FormData();
-        formData.append("chatId", selectedChat._id || "");
-        formData.append("senderId", user._id || "");
-        formData.append("text", currentText.trim());
-        
-        if (currentFile) {
-            formData.append("file", currentFile);
-        }
+        try {
+            //for file encryption
+            let fileInfo = null;
+            let finalFileToSend = currentFile;
 
-        // Call API to save to MongoDB
-        const response = await postMultipartRequest(`${baseUrl}/messages`, formData);
+            if (currentFile) {
+                // Encrypt the file bytes before they leave the browser
+                const fileEncResult = await encryptFile(currentFile, selectedChat.members);
+                
+                // Swap the real file for the encrypted "blob"
+                finalFileToSend = new File(
+                    [fileEncResult.encryptedBlob], 
+                    currentFile.name, 
+                    { type: "application/octet-stream" } // Hide the true file type
+                );
     
-        if (response.error) {
-            return console.log(response.error);
-        }
+                // Store the "keys" to this specific file in the fileInfo
+                fileInfo = {
+                    name: currentFile.name,
+                    type: currentFile.type,
+                    fileIv: fileEncResult.iv,
+                    fileKeyBundle: fileEncResult.keyBundle
+                };
+            }
 
-        setMessageDrafts(prev => ({ ...prev, [selectedChat._id]: "" }));
+            // encrypt a JSON object that contains both the text and file info
+            const payload = JSON.stringify({
+                body: currentText,
+                fileInfo: fileInfo
+            });
 
-        //emit via socket so the other person sees it instantly
-        emitMessage(response);
         
-        // Update UI
-        setMessages((prev) => [...prev, response]);
+            console.log("Chat Members:", selectedChat.members);
+            // Scramble the text for everyone in the chat
+            const encryptionResult = await encryptMessage(payload, selectedChat.members);
 
-        clearFile();
+            if (!encryptionResult || !encryptionResult.keyBundle || encryptionResult.keyBundle.length === 0) {
+                console.error("Encryption failed: Bundle is empty");
+                toast.error("Security handshake failed. Please refresh.");
+                return;
+            }
 
-        //play send sound effect
-        if (sendSound.current) {
-            sendSound.current.currentTime = 0;
-            sendSound.current.play().catch(() => {});
-        }
+            const formData = new FormData();
+            formData.append("chatId", selectedChat._id);
+            formData.append("senderId", user._id);
+            formData.append("text", encryptionResult.scrambledText); // Scrambled text
 
-        //Move chat to top of list by updating userChats
-        setUserChats(prev => {
-            const updatedChat = {
-                ...selectedChat, 
-                lastMessage: response, 
-                updatedAt: new Date().toISOString()
-            } 
-            const otherChats = prev.filter(c => c._id !== selectedChat._id);
-
-            return [updatedChat, ...otherChats];
-
-        });
+            formData.append("encryptionMeta", JSON.stringify({
+                iv: encryptionResult.iv,
+                keyBundle: encryptionResult.keyBundle
+            }));
         
-        // scroll down for own messages**
-        scrollToBottom();
+            if (finalFileToSend) {
+                formData.append("file", finalFileToSend);
+            }
+
+            // Call API to save to MongoDB
+            const response = await postMultipartRequest(`${baseUrl}/messages`, formData);
+    
+            if (response.error) {
+                return console.log(response.error);
+            }
+
+            setMessageDrafts(prev => ({ ...prev, [selectedChat._id]: "" }));
+
+            //emit via socket so the other person sees it instantly
+            emitMessage(response);
+        
+            // Update UI
+            setMessages((prev) => [...prev, response]);
+
+            clearFile();
+
+            //play send sound effect
+            if (sendSound.current) {
+                sendSound.current.currentTime = 0;
+                sendSound.current.play().catch(() => {});
+            }
+
+            //Move chat to top of list by updating userChats
+            setUserChats(prev => {
+                const updatedChat = {
+                    ...selectedChat, 
+                    lastMessage: response, 
+                    updatedAt: new Date().toISOString()
+                } 
+                const otherChats = prev.filter(c => c._id !== selectedChat._id);
+
+                return [updatedChat, ...otherChats];
+
+            });
+        
+            // scroll down for own messages**
+            scrollToBottom();
+        } catch (error) {
+            console.error(error);
+            toast.error("Encryption failed!");
+        }
     };
 
     useEffect(() => {
@@ -502,6 +617,23 @@ const Chat = () => {
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
+    // If still checking sessionStorage, show a loader
+    if (isResolvingKey) {
+        return (
+            <div className="flex items-center justify-center h-screen w-full bg-gray-50">
+                <div className="flex flex-col items-center gap-2">
+                    <div className="w-8 h-8 border-4 border-[#3594b6] border-t-transparent rounded-full animate-spin"></div>
+                    <p className="text-gray-500 text-sm animate-pulse">Securing connection...</p>
+                </div>
+            </div>
+        );
+    }
+
+    // If finished checking, and the user has a key in the DB but hasn't unlocked it yet:
+    if (!user?.publicKey || (user?.encryptedPrivateKey && !unlockedKey)) {
+        return <E2EESetupModal />; 
+    }
+
     return (
     
     <div className="flex w-full bg-white" style={{ height: "calc(100vh - 4rem)" }}>
@@ -635,7 +767,6 @@ const Chat = () => {
                 )}
             </div> 
         </div>
-        
 
         {/* Chat window */}
         <div className="flex-1 flex flex-col">
@@ -688,7 +819,6 @@ const Chat = () => {
                                 const previousDateLabel = previousMessage ? formatMessageDate(previousMessage.createdAt) : null;
                                 // Only show the date bubble if it's the first message or the date label changed
                                 const showDateSeparator = messageDateLabel !== previousDateLabel;
-
                                 //Sender Logic
                                 const isSender = m.senderId === user._id;
                                 const sender = selectedChat?.members?.find(mem => mem._id === m.senderId);
@@ -709,10 +839,7 @@ const Chat = () => {
 
                                         {/* New Messages Divider */}
                                         {index === newMessageBoundary && (
-                                            <div
-                                                ref={newMessagesRef}
-                                                className="flex items-center my-3"
-                                            >
+                                            <div ref={newMessagesRef} className="flex items-center my-3">
                                                 <div className="flex-grow border-t border-gray-300"></div>
                                                 <span className="px-3 text-xs text-gray-500 font-semibold">
                                                     New Messages
@@ -723,67 +850,21 @@ const Chat = () => {
 
                                         {m.type === "system" ? (
                                             <div className="flex justify-center my-4">
-                `                               <span className="bg-gray-100 text-gray-500 text-[11px] px-4 py-1 rounded-full italic shadow-sm border border-gray-200">
-                                                    {m.text}
+                                                <span className="bg-gray-100 text-gray-500 text-[11px] px-4 py-1 rounded-full italic shadow-sm border border-gray-200">
+                                                    <DecryptText text={m.text} encryptionMeta={m.encryptionMeta} />
                                                 </span>
                                             </div>
                                         ) : (
-                                            <>
-                                                <div className={`flex flex-col ${isSender ? "items-end mr-4" : "items-start ml-4"}`}>
-                                                    {/* Show name if it's a group chat and NOT the current user */}
-                                                    {selectedChat.isGroupChat && !isSender && (
-                                                        <span className="text-[10px] text-gray-500 ml-2 mb-1">
-                                                            {sender?.name || "Unknown User"}
-                                                        </span>
-                                                    )}
-                                        
-                                                    <div className={`max-w-[70%] p-2 rounded-2xl message-bubble message-animation whitespace-pre-wrap
-                                                        ${m.senderId === user._id ? "bg-[#3594b6] text-white self-end rounded-tr-none bubble-right" : "bg-gray-200 self-start rounded-tl-none bubble-left"}`} >
-
-                                                            {/* Render Image if it exists */}
-                                                            {m.fileUrl && (m.type === "image" || m.fileUrl.match(/\.(jpeg|jpg|gif|png|webp)$/i)) && (
-                                                                <div className="mb-2">
-                                                                    <img 
-                                                                        src={`http://localhost:5050${m.fileUrl}`} 
-                                                                        alt="Sent attachment" 
-                                                                        className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-                                                                        onClick={() => window.open(`http://localhost:5050${m.fileUrl}`, '_blank')}
-                                                                    />
-                                                                </div>
-                                                            )}
-
-                                                            {/* Render File Link if it's not an image */}
-                                                            {m.fileUrl && m.type === "file" && (
-                                                                <a 
-                                                                    href={`http://localhost:5050${m.fileUrl}`} 
-                                                                    target="_blank" 
-                                                                    rel="noopener noreferrer"
-                                                                    className="flex items-center gap-2 p-2 mb-2 bg-black/10 rounded-lg text-xs font-medium hover:bg-black/20 transition-colors"
-                                                                >
-                                                                    <Paperclip size={14} />
-                                                                    <span className="truncate max-w-[150px]">View Attachment</span>
-                                                                </a>
-                                                            )}
-
-                                                            {m.text && <p className="text-sm">{m.text}</p>}
-                                                            <span className="block text-[10px] opacity-70 text-right">
-                                                                {m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], {
-                                                                    hour: 'numeric',
-                                                                    minute: '2-digit'
-                                                                }) : ""}
-                                                            </span>
-                                                    </div>
-                                                </div>
-
-                                                {isSender && !selectedChat.isGroupChat && m._id === lastSentMessageId && (
-                                                    <span className="block text-[10px] opacity-70 text-right mr-4">
-                                                        {index === messages.length - 1 ? m.seenBy?.includes(recipientUser?._id)
-                                                            ? "Seen"
-                                                            : "Delivered" 
-                                                            : ""}
-                                                    </span>
-                                                )}
-                                            </>
+                                            <MessageBubble 
+                                                m={m} 
+                                                user={user} 
+                                                selectedChat={selectedChat} 
+                                                recipientUser={recipientUser}
+                                                isSender={isSender}
+                                                lastSentMessageId={lastSentMessageId}
+                                                index={index}
+                                                messagesLength={messages.length}
+                                            />
                                         )}
                                     </div>
                                 );

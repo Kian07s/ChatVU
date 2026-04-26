@@ -7,6 +7,16 @@ const userSchema = new mongoose.Schema({
     password: {type: String, required: true, minlength: 8, maxlength: 1024},
     lastSeen: { type: Date, default: null},
 
+    //The 'Padlock' for E2EE
+    publicKey: { 
+        type: String, 
+        default: null 
+    },
+    //(Encrypted Vault) for security question to ask for users to be able to log in on different devices
+    encryptedPrivateKey: {
+        type: String,
+        default: null
+    }
 }, 
 {
     timestamps: true,

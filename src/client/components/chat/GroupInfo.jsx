@@ -120,13 +120,15 @@ const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSe
 
         if (response.ok) {
              // If the group has been reduced to a DM
-            if (data.replacedBy === "dm") {
-                setUserChats(prev => {
-                    const filtered = prev.filter(c => c._id !== chat._id && c._id !== data.chat._id);
-                    return [...filtered, data.chat];
-                });
-                setSelectedChat(data.chat);
+            if (data.message === "Group deleted" || !data._id) {
+                setSelectedChat(null);
                 setView("messages");
+                onBack();
+
+                setUserChats(prev => prev.filter(c => c && c._id !== chat._id));
+
+                toast.success("Group deleted", { id: loadingToast });
+                return;
             } 
             else {
                 // Normal member removal
@@ -393,8 +395,11 @@ const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSe
                         </button>
                     )}
 
-                    {chat.members.map(member => {
-                        const memberIsAdmin = String(member._id) === String(chat.groupAdmin);
+                    {chat?.members?.map(member => {
+                        // 1. Safety check: If member is somehow null/undefined, skip rendering this item
+                        if (!member) return null;
+
+                        const memberIsAdmin = String(member?._id) === String(chat?.groupAdmin);
 
                         return (
                             <div key={member._id} className="flex items-center p-3 rounded-md shadow-sm">
@@ -403,12 +408,12 @@ const GroupInfo = ({ chat, user, onBack, updateSelectedChat, setUserChats, setSe
                                         <FaUser className="text-xl text-[#3594b6]"/>
 
                                         {/* Green dot to show user online, don't want that for groups*/}
-                                        {isMemberOnline(member._id) && (
+                                        {member?._id && isMemberOnline(member._id) && (
                                             <span className="absolute bottom-0 right-0 h-4 w-4 bg-green-500 border-2 border-white rounded-full"></span>
                                         )}
                                     </div>
                                         
-                                    <span>{member.name}</span>
+                                    <span>{member.name || "Unknown User"}</span>
 
 
 

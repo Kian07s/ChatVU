@@ -152,8 +152,6 @@ const NewChat = ({ onClose, setSelectedChat, setView }) => {
         }
     };
 
-    console.log("selectedMembers:", selectedMembers);
-
     return (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
             <div className="bg-white w-full max-w-md rounded-lg shadow-lg p-4">
