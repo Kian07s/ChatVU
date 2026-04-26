@@ -15,6 +15,13 @@ const messageSchema = new mongoose.Schema({
         required: false,
         default: ""
     },
+    encryptionMeta: {
+        iv: String,
+        keyBundle: [{
+            recipientId: String,
+            encryptedKey: String
+        }]
+    },
     fileUrl: {
         type: String,
     },

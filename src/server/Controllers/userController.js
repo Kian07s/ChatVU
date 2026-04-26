@@ -86,7 +86,7 @@ const registerUser = async(req, res) => {
 
         //once the user is successfully registered, send them their info
         //200 is success message
-        res.status(200).json({_id: user._id, name, email, token});
+        res.status(200).json({_id: user._id, name, email, token, publicKey: user.publicKey, encryptedPrivateKey: user.encryptedPrivateKey});
     } catch (error) {
         //500 is server error
         res.status(500).json({ message: error.message || "Server error" });
@@ -113,7 +113,7 @@ const loginUser = async(req, res) => {
         }
 
         const token = createToken(user._id);
-        res.status(200).json({_id: user._id, name: user.name, email, token});
+        res.status(200).json({_id: user._id, name: user.name, email, token, publicKey: user.publicKey, encryptedPrivateKey: user.encryptedPrivateKey});
     } catch (error) {
         res.status(500).json({ message: error.message || "Server error" });
     }
@@ -138,4 +138,20 @@ const getUser = async(req, res) => {
     }
 };
 
-export { registerUser, loginUser, findUser, getUser };
+// encryption
+const setupE2EE = async (req, res) => {
+    const { userId, publicKey, encryptedPrivateKey } = req.body;
+
+    try {
+        const user = await userModel.findByIdAndUpdate(
+            userId,
+            { publicKey, encryptedPrivateKey },
+            { new: true }
+        );
+        res.status(200).json({ success: true, message: "E2EE Initialized" });
+    } catch (error) {
+        res.status(500).json(error);
+    }
+};
+
+export { registerUser, loginUser, findUser, getUser, setupE2EE };

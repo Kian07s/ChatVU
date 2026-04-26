@@ -41,7 +41,7 @@ const createChat = async(req, res) => {
           });
 
           // Populate members before sending
-        const populatedChat = await chatModel.findById(newChat._id).populate("members", "name email");
+        const populatedChat = await chatModel.findById(newChat._id).populate("members", "name email publicKey");
 
         // Announcement for Group Creation
         if (isGroupChat) {
@@ -79,7 +79,7 @@ const getUserChats = async(req, res) => {
         //find userId and bring any chats that have that id
         const chats = await chatModel.find({
             members: {$in: [userId]}
-        }).populate("members", "name email").sort({ updatedAt: -1 });
+        }).populate("members", "name email publicKey").sort({ updatedAt: -1 });
 
         res.status(200).json(chats);
 
@@ -103,7 +103,7 @@ const findChat = async(req, res) => {
                     { groupName: { $regex: query, $options: "i" } }
                 ]
             })
-        }).populate("members", "name email");
+        }).populate("members", "name email publicKey");
 
         //searching
         const filteredChats = chats.filter(chat => {
@@ -130,50 +130,21 @@ const removeGroupMember = async (req, res) => {
     const { memberId, requesterId } = req.body;
 
     try {
-        const chat = await chatModel.findById(chatId).populate("members", "name");
+        const chat = await chatModel.findById(chatId).populate("members", "name publicKey");
 
         if (!chat || !chat.isGroupChat) {
             return res.status(404).json({ message: "Group chat not found" });
         }
 
+        //elements for announcement
         const memberToRemove = chat.members.find(m => m._id.toString() === memberId);
         const adminUser = chat.members.find(m => m._id.toString() === requesterId);
 
-        chat.members = chat.members.filter(m => m._id.toString() !== memberId);
+        const remainingMemberIds = chat.members
+            .filter(m => m._id.toString() !== memberId)
+            .map(m => m._id); 
 
-        //if after removing only 2 members are left in the group, make it a dm
-        if (chat.members.length === 2) {
-            const [userA, userB] = chat.members;
-
-            const existingChat = await chatModel.findOne({
-                isGroupChat: false,
-                members: { $all: [userA.toString(), userB.toString()], $size: 2 }
-            });
-
-            await chat.deleteOne();
-
-            //prevent duplication, if dm exists, delete group
-            if (existingChat) {
-                const existingChatPopulated = await chatModel.findById(existingChat._id).populate("members", "name email");
-                return res.status(200).json({
-                    replacedBy: "dm",
-                    chat: existingChatPopulated
-                });
-            }
-                
-            //if dm doesn't exist delete group chat and create one
-            const dm = await chatModel.create({
-                members: [userA, userB],
-                isGroupChat: false
-            });
-
-            const dmPopulated = await chatModel.findById(dm._id).populate("members", "name email");
-
-            return res.status(201).json({
-                replacedBy: "dm",
-                chat: dmPopulated
-            });
-        }
+        chat.members = remainingMemberIds;
 
         if (chat.members.length <= 1) {
             await chat.deleteOne();
@@ -185,7 +156,7 @@ const removeGroupMember = async (req, res) => {
         // Create announcement
         await createSystemMessage(chatId, `${memberToRemove?.name || "A user"} was removed by ${adminUser?.name || "Admin"}`);
 
-        const updatedChat = await chatModel.findById(chatId).populate("members", "name email");
+        const updatedChat = await chatModel.findById(chatId).populate("members", "name email publicKey");
         res.status(200).json(updatedChat);
 
     } catch (error) {
@@ -199,7 +170,7 @@ const leaveGroup = async(req, res) => {
     const { userId } = req.body;
 
     try {
-        const chat = await chatModel.findById(chatId).populate("members", "name");
+        const chat = await chatModel.findById(chatId).populate("members", "name publicKey");
 
         if (!chat || !chat.isGroupChat) {
             return res.status(404).json({ message: "Group chat not found" });
@@ -224,7 +195,7 @@ const leaveGroup = async(req, res) => {
 
         await createSystemMessage(chatId, `${leavingUser?.name || "A user"} left the group`);
 
-        const updatedChat = await chatModel.findById(chatId).populate("members", "name email");
+        const updatedChat = await chatModel.findById(chatId).populate("members", "name email publicKey");
         res.status(200).json(updatedChat);
 
     } catch (error) {
@@ -243,7 +214,7 @@ const changeGroupName = async(req, res) => {
             chatId,
             { groupName: newGroupName },
             { new: true }
-        ).populate("members", "name email");
+        ).populate("members", "name email publicKey");
 
         if (!updatedChat) {
             return res.status(404).json("Chat not found");
@@ -285,7 +256,7 @@ const addMembers = async(req, res) => {
         const names = addedUsers.map(u => u.name).join(", ");
         await createSystemMessage(chatId, `${adminUser?.name} added ${names} to the group`);
     
-        const updatedChat = await chatModel.findById(chatId).populate("members", "name email");
+        const updatedChat = await chatModel.findById(chatId).populate("members", "name email publicKey");
     
         res.status(200).json(updatedChat);
     } catch (error) {
@@ -323,7 +294,7 @@ const archiveChat = async(req, res) => {
 
         await chat.save({ timestamps: false });
 
-        const populatedChat = await chatModel.findById(chatId).populate("members", "name email");
+        const populatedChat = await chatModel.findById(chatId).populate("members", "name email publicKey");
         res.status(200).json(populatedChat);
     } catch (error) {
         console.error("Archive Crash:", error);
@@ -362,7 +333,7 @@ const pinChat = async(req, res) => {
 
         await chat.save({ timestamps: false });
 
-        const populatedChat = await chatModel.findById(chatId).populate("members", "name email");
+        const populatedChat = await chatModel.findById(chatId).populate("members", "name email publicKey");
         res.status(200).json(populatedChat);
     } catch (error) {
         res.status(500).json({ message: error.message });

@@ -4,6 +4,7 @@ import { ArchiveRestore, PinOff, Image, File } from 'lucide-react';
 import { useState, useEffect, useRef } from "react";
 import { useContext } from "react";
 import { ChatContext } from "../../../Context/ChatContext.jsx";
+import DecryptText from "./DecryptText.jsx";
 
 
 const UserChat = ({ chat, user, onClick, onlineUsers, isActive, draft, onArchive, isArchived, onPin }) => {
@@ -144,16 +145,23 @@ const UserChat = ({ chat, user, onClick, onlineUsers, isActive, draft, onArchive
                                     </span>
                                 )}
                                 <span className="truncate">
-                                    {chat.lastMessage?.fileUrl ? (
-                                        <span className="flex items-center gap-1 text-gray-500">
-                                            {chat.lastMessage.type === "image" ?
-                                                 <span className="flex"><Image size={16} />Photo</span> : 
-                                                 <span className="flex"><File size={16} />Document</span>
-                                            }
-                                        </span>
+                                    {chat.lastMessage ? (
+                                        chat.lastMessage?.fileUrl ? (
+                                            <span className="flex items-center gap-1">
+                                                {chat.lastMessage.type === "image" ?
+                                                     <span className="flex"><Image size={16} />Photo</span> : 
+                                                     <span className="flex"><File size={16} />Document</span>
+                                                }
+                                            </span>
+                                        ) : (
+                                            <DecryptText 
+                                                text={chat.lastMessage.text} 
+                                                encryptionMeta={chat.lastMessage.encryptionMeta} 
+                                            />
+                                        )
                                     ) : (
-                                        chat.lastMessage?.text || "No messages yet"
-                                    )}
+                                        <span className="italic">No messages yet</span>
+                                    )}  
                                 </span>
                             </div>
                         )}

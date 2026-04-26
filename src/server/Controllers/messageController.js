@@ -3,18 +3,33 @@ import chatModel from "../Models/chatModel.js";
 
 //create message 
 const createMessage = async (req, res) => {
-    //get message info
-    const { chatId, senderId, text } = req.body;
-
-    const cleanText = (text === "undefined" || !text) ? "" : text;
-
-    const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
-    const fileType = req.file ? (req.file.mimetype.startsWith("image") ? "image" : "file") : "user";
-
-    //create a new message
-    const message = new messageModel({chatId, senderId, text: cleanText, fileUrl, type: fileType, seenBy: [senderId]});
-
     try {
+        //get message info
+        const { chatId, senderId, text, encryptionMeta } = req.body;
+
+        if (!chatId || !senderId) {
+            return res.status(400).json({ error: "chatId and senderId are required" });
+        }
+
+        const cleanText = (text === "undefined" || !text) ? "" : text;
+        const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+        const fileType = req.file ? (req.file.mimetype.startsWith("image") ? "image" : "file") : "user";
+
+        //create a new message
+        const messageData = new messageModel({chatId, senderId, text: cleanText, fileUrl, type: fileType, seenBy: [senderId]});
+
+        // Parse the JSON string back into an object for MongoDB
+        if (encryptionMeta) {
+            try {
+                messageData.encryptionMeta = typeof encryptionMeta === 'string' 
+                    ? JSON.parse(encryptionMeta.trim()) 
+                    : encryptionMeta;
+            } catch (e) {
+                console.error("Failed to parse encryptionMeta:", e);
+            }
+        }
+
+        const message = new messageModel(messageData);
         const response = await message.save();
 
         //Update the Chat's "updatedAt" to bring it to the top
@@ -69,8 +84,8 @@ const messagesSeen = async(req, res) => {
         }
 
         res.json({ success: true, updatedCount: updatedMessages.modifiedCount });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 };
 
